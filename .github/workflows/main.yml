@@ -50,9 +50,11 @@ jobs:
           VERSION=$(jq -r '.releases[0].version' release.json)
           FILENAME=$(jq -r '.releases[0].filename' release.json)
           NAME=$(jq -r '.releases[0].name' release.json)
+          FILENAME_TITAN=${FILENAME%.zip}-titan.zip
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "filename=$FILENAME" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "filename_titan=$FILENAME_TITAN" >> "$GITHUB_OUTPUT"
 
       - name: Prepare addon folder
         run: |
@@ -79,8 +81,8 @@ jobs:
 
       - name: Create zip artifact
         run: |
-          echo "Packaging ${{ steps.read_release.outputs.filename }}"
-          zip -r "${{ steps.read_release.outputs.filename }}" "${{ steps.read_release.outputs.name }}"
+          echo "Packaging ${{ steps.read_release.outputs.filename_titan }}"
+          zip -r "${{ steps.read_release.outputs.filename_titan }}" "${{ steps.read_release.outputs.name }}"
 
       - name: Ensure tag exists
         run: |
@@ -111,16 +113,14 @@ jobs:
         with:
           tag_name: ${{ steps.read_release.outputs.version }}
           name: ${{ steps.read_release.outputs.version }}
-          files: ${{ steps.read_release.outputs.filename }}
+          files: ${{ steps.read_release.outputs.filename_titan }}
           fail_on_unmatched_files: false
           generate_release_notes: true
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Package via BigWigs Packager (optional)
-        uses: BigWigsMods/packager@v2
-        continue-on-error: true
+      # Disabled: BigWigs Packager to avoid duplicate non-titan zip assets
 
       # another example where we supply additional arguments, this example is specifically to release
       # for the Classic version of the game
