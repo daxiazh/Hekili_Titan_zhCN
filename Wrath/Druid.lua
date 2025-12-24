@@ -908,6 +908,7 @@ spec:RegisterAuras( {
         id = 9634,
         duration = 3600,
         max_stack = 1,
+        copy = { 9634, 5487, "bear_form" }, -- 添加普通熊形态ID，让40级前也能识别
     },
     -- Increases spell damage taken by $s1%.
     earth_and_moon = {
