@@ -43,6 +43,30 @@ jobs:
       - name: Package and Release
         uses: BigWigsMods/packager@v2
 
+      - name: List packaged output
+        if: always()
+        run: |
+          pwd
+          ls -la
+          if [ -d .release ]; then
+            echo ".release:"
+            ls -la .release
+          fi
+          if [ -d release ]; then
+            echo "release:"
+            ls -la release
+          fi
+
+      - name: Upload packaged files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-addon
+          if-no-files-found: warn
+          path: |
+            .release/**
+            release/**
+
       # another example where we supply additional arguments, this example is specifically to release
       # for the Classic version of the game
       # - name: Package and release for Classic
