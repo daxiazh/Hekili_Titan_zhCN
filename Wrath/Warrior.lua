@@ -2105,20 +2105,6 @@ spec:RegisterAbilities( {
         handler = function()
         end
     },
-
-    -- 自动攻击 - 后备技能
-    auto_attack = {
-        id = 6603,
-        cast = 0,
-        cooldown = 0,
-        gcd = "off",
-
-        startsCombat = true,
-        texture = 135641,
-
-        handler = function()
-        end
-    },
 } )
 
 spec:RegisterStateTable("assigned_shout", setmetatable( {}, {
@@ -2333,6 +2319,7 @@ spec:RegisterPack( "武器(黑科研)", 20251223, [[Hekili:LAvZUTTrq4NLEPWkaHquX
 spec:RegisterPack( "狂怒(黑科研)", 20251226, [[Hekili:nN1xVrTXw8pl8cAtR62DZFi3wb5H(qLU8aVSvQVzVtSNK1n(pBhpo7DRqwbqucekI7TIeulOwkQuG(axjQquGw(W0yNW3IEMzwBpE84DJJaPkri7oZzoNFZzoZVZ5mXORXNz0ZgrXgNB(oZVu35N)uT70P7IlEkJE0XdXg9gIS2aTo8bFKh8)hSZft)UFRvY3(FtU59MJn9y3aKntnHbrelqeJERg54s)3(gRQv3D7cYoeBzCo4ddCSTXcjXHwg9(CeH4eq(44(FAezCC)piUVWKPBF79F1TtU(UhC1TJpB6t))j39bP79SdE0lo4Q)EY2)kByM0cHsV6oPp9wGC)4ZtE9Ls(ZhFWnEcOZK9UZH3BRdU(3NCLxg3FLSb4FmDVDEZ9Vr6Ups8TDFu6D3k(Sj)YRt36cjBFL0V5NafS)lVCYDE4BUZwh(GlK()U1H3)IFyYn2jz7NncJ2ed4rija20D3tSwWhrcwZXL7zgHi(o(RhA0lD7BMCTFi5jVk5Y)8(V4RxE)N)40RT1Hx6ps2EVdV3d)RTUy8zn656esdzoxhFhk87ZXpWW(OvDX2gFIrVGHGZetn6HSOob(g92erCyZY(KBe8RwX9TXRgT2ATPeKdZ6M2rEEJBhnmU)jJ7VqNoX9NlU)5pFCFkISoM2M64HnPbM2oC1qmfN9YdtHd1gdLjQFag5sh0EOfnU)PJ7pFhzJG)pyRik2C4aui3ml0yZCI4(zJ1UK6eBsyXu2zq(CHUipZHqyNmochee5AlMlytmXCI0miT47CiTQBqGnDGdjKAMzOQGtskgSw6DoSgb2YDKJV9uavUmmiDQgdPCBkcAndJ8TzEFHo4rS5qwkGKFPTf)FlX5bMeZpz5iIxaPDifiZ4b7VhxYUTbzF)4(UajLV1y(mZXhzbDHcCvX2vl34D1jYbKh6lcMGhtc2oIVc(DrMhVLEGp5Q6u2tNMVVNtg2mwyzu)VooOo3xlRTzbMZWbtnYqWEanuihYlZLYkiW1oyKFBP45cXKfip2Q00am5MHV8WiGJbCyYEcMOu4hjNXh1yNrdpxK3MqCwjkopmGriGtcpD70yanD32kNr6(lp7Kz2cmPdiyiO21EME3JHwiyRnCXHH(WpskAYTnzjTXi6aZroHd0kN2J1sZuYukZjP8jZqGYyABfriyFwIhyNj2qSXv2mAsuPXtiMUyP6idzcYpFBEI78REY6sZoHHSUDKdeHXLodpTmYztb8oRXGSjJ)udOzYWXCZZW3empVaZTMCGXsYomyeMrlIShNtjkkDbfcPFwd4m5rd8jNtd0Zvch)nV0HsNWSsLKZ70sIouYvjGP6m5irbOIqh)GrgSC2aRYAOixTL2LbslKRRP4lMS6bfvforD86c1umMfXHIbev9irIcVi3VkJuUXL50YRglBYHqDKyxz7QP4OcKOu33clvOPvXWoInpZNpmGpOMkAQxxDk0LleRyczI0xbsTQyrr4ipCd7ZdxzzrY0Qyi2jo4OWeugevRfqJJVCjT5AKe5x7XQuXMQPTlmGGDetcXKnGZi2w2QmONMjuxOUSIQ2crPU4gBi5vPnxNIzG7ey)qNnBSLuxybXB2QhGjbowW0eNnWkbUc6UmjrrqHLaYHcAklhL1qh2kWd2x6U2QSzMSfyj8Kd3R67R)gmkm0zDFi2JDdM2gmTheCZUPWhOiS1BSzMZMljZOLMvDPkWsDADTFvlSKT8BpijVyHZp7QXuD98RVq4GJLdLxuX8see8uie(JAefIndGUmw3YMPUPEmund2YckdMEHyoGwWZbhYl)TlFIk9p9Lr4iSuALAdmRIR6phoY4ALJbUSC5vWObq1ZZRRap5RWfdpDoED1XXs1oRciLtgixI40thORfI8SGUiVCY(8mctcelZIupDTs9NmCQ)0qBZ)LcEl65VEg7JS5Q0uFTbpfOOut(c(8JefBjYy5TIkfB5KgZMMLRl3iOdiLEYgakcKdITH60dgPqVOo90zaAvtVQvcml6KkBQkNgDfV62jl1ZVkyZwDPwHY3LZnLeknIb5eL7CiZQhRUjkU4jcoQNMGICbNrBhVHeOyzPkMBtq(BWJ4KUilxzpvZg(FaPdYDl50PL7QS28eZOF2zvi5B1ChnDtSYBPnXXjrZuATPvTpDvPM1uEzOs3PuB9P(evZ8P9eUG6EbjP7A19AA1L8KNotXLLlkBCaIEHkSWlpTfny8q4Q1qmCHezzHDZA15OMLRMNSPYrvL3vVsY26tTPQSsjsQjr5uA6OYJwKNCRM8DZixKMswQNGV(svQ88lfMr9rYTXEb8sKlLcViKJnpbAU(RkkZUCbzQtZTF90g5ESIxZOsf71LhIQPpTmY76ckRMERC5cSJ9i6a4EApXFzs(yg)9p]] )
 spec:RegisterPack( "防御(黑科研)", 20251226, [[Hekili:TJ12UTTrt4NLEtGDccHKTvou40l6DnxeuafGEhjxrUsI1uCv3DPnCraroGgBN40MGG2e8Nu04IK02u0MIMI00CQpm)Ms2VfD2LuKlP4kRyxGMlcGLHe3zN9BMDMVzgAw38SMnDrCS5zMR2CnQp3ChZOwT6hV(jmBYxTp2SzFKZsOoWxcq9G)p8QxCW)7pMj(M3i(6BnRy5v9jixHAyKqQdiIzZwHE(8pkWSvL6U2CMnrH8UeQzZe9y2SRNRlozdyMJzZpbrPEe67hz)Xuch7W9ibr2hnYE3B)7dUY9hS(T3(L3oEZVz4gRhD6bp53I)2ho4wpD4p98HB8xXR)ZIhlKorObBC1bp5Rb5U3ZI)7lf)6hn8lFmO5H351d3yZHBEN41ErK9hezhF)RT9lwt(1DV7A7CTTg8KVx(Rbp(cdVWVmyJBosYDVZFU7DV82p78IhC6ZwVwK9cB)INg)GBLP3b37Ld2CRD(Hhg)v3q9K2DTRn8v)QztFpgNjDBEbD8XW3oJ8YahGA5JDn)qZMoupoM6Heo02TnA5tiU(HmUry)i7dfz7ILpN1fXfYf0XI3LswXWLSsa4ILonq)Lw2Kd3ht(KCXTXbmVLXwmokWbxsJLx2SzidBrA32QJJRWmGtyETNafIMmCcPuCahCMNkYMH5CaEmJplehItbkM1L47kTZs7iYobigDXuINdacQ3sydwFCai)rISxgbheCWgI4qxlwyGlMA5qyC5YZOirpKxah(KkuK9HZ0UlEzeyF8mnp7ODd)5qaWbofW57HfNHpQNbfluhlYEXi75KYNRnv5gPVCpAblPk35cADNayqD6qjr2N7CzHeCkaeHJ0nSxVvLXlZkDLvI70WPXVy0HD1Gl5sqOPZscC2qGZslk2Nk4bXoMQyu8Y4abdtbroUwlgXyEDcWGI7sc5goKE9qbUcRv(aPTKMyiwp)wbSOfYxT8(kjyo(klOaDNyArxli5Zh)MHm19OfvQcjq0j1IOkthscx0LhOMRNMfioJ610Eiz5WjrGwU4Eej2SsfxAEqW67LfKI6BrXUHjXyIyqbIMjBzHgOiFVpp)gQiVxfcOMboVmMFwvtPS8sBspRRcu5COmOfe8dxStc08UPKn(O(LGRgDugY54vvxsKoxXKliLBf0YLZBQRN5DYKwhsE3iHAAgPvitgCKAhZmjYmr0zrcKJQNj9ijYA1bozjjjq0v6QsnQBbv7UevzrBVa9tUskifxwadf6ZRQMBwspY33k5hwIs1jfSTsAcc4w5zLrZ2rxeDmwS5RGpSfI1TKyfSqWjbNnf32hN(KcY2q79BxmYN31OVdpjAQHcBbgaVyDrSFFI8HJ4HNkDvlxx(Gxvw53DY80LuXc1Yz4WbYyLW(5An5rImJo4amfncI6zALQaUk9C8sAly(AJIIb2iRwKGqMb3dtRxRp0eP1c9DuCiIMPOYgBhVA7jvVoeldhzpw5Gn9KHz0Q4EyiMiWz19GxvphKqEOrlWL0ZdZKMzDLsNHbAdsreCoRrfr4tAVP9KMrNmvjFfcIHg8jwjuEJL(1NIHAQqbSj30l0utkZtQtWLWnw2RJNVOPZiBGXrjQmBHj3FBroQfZ4OgRBGuQQjuX(y1MYWj9mYhKwzup(QArrFlJ73wukyWLA)qpRuwvh4wFjFmJfaFkK63ctzy6sqPo9ZtuQJXCnn1TnQFYMrSg7nsNMjF(pNWQQcr8e(GjpKjHXuAc9DtBwCAthFm0TLslmVfohzcg1oa5iXk0z502DrfvIMx9EFu7OJNSQD8UX3CrH0NkTpN6Tq75tFNV79(3R5Q3xZtVxj66NVEc9MCqk58V10ZtQFN9zTPd64ZJ1M0bA02EOpLqTElza33nq4ykPCTr5aDvuCK0xE9R0LzkHV4B(HyjrKE2NdjkXxtEnjU65I6YCOcFpSf0DSRNun00EUvFCffn3BOuoon99EQgKMvVs5WKm5jvJAiVKgvOpz7ikeuzWenYpQueizDJgYBnFWBcJ3KejkFY8Q2Kiim7vovvH6PWQuvXOGYIPzceoXmTcMsP2zQWkxu6jMv1quF1zv1C9(0o08Q5Mm8oLeEAKrLGOHQfu(n8vrT(9Jr8g6Hl0AJk8gBsz(4VDIu851UAew1DL8T(x5O5fUrtSplSpd2FTmZvhD1HNYSLQgizVDYj6Bfc11ckCcJfGOUYPqYnX2uSO2vE5FEcp2kiQGccgkAW6xp(kFx8JFz8x8GTF(LBS9ZE0GRC(DU0RIx)w7S1p()p)fJoT8vn5iy9GrYjT9eyqQhZ)j]] )
 
+spec:RegisterPack( "复仇(黑科研)", 20251223, [[Hekili:nwvtRTnpC8pl7YogSDsxwHTEyN2UKlENLTS8)elISKrsoHaftzJYshpDhhDqHDzWGDyJDzmYw55dZss7(wmj1LU0MqSbJriRFV8)nzKp65OWuSgq9c8c2ZpiODlV9B3nOdkupPaqHfyYq8aZcoo38EXhoD(pELD7jmbo1cxjkLeZNqHjLuM(zCuYT50VBl)oTnRmNTaiOEMfz00u46tckck8Q))DZ)(Nw(6JU6Lxm)NNT44Pxo7J)(4tV8IpV49ZMp7npfgsz0LF9Kf)3BV8KPlM(T5xC(Vo6fOqgvPvU4a6JlzAZYE(REPrHahNWGu0tqHyIMk4gBmgGckFqKslPdbfkKiPAqsXxFMrqeWHCkOQIpOk23qtVGAOmJcS0OeSkBD2sk73VLXyaxzzvPXCc0QSWYy7TZyPcIgNrzqebR0gx6synGshsr)(rdiPom34TcGXIKqFgC9ogX70yX9wxCPPxOfPukbUUk(rvX75TPUcoBsezmXwEx5HeMqKArBfFVDNl1zL8uqgry4IMuAEqJJL1sksyeWTn2319nitB0SBJAhumC(gmUQvHjidnSD4HvX3oTEGlTAe5H7wK7AT69EQySR6VFJCVZH1tAzrv89RIXdgifwY99AC9WR2YBJAUimapY1z5V(K)QpNlKAm7Vd7RBjlGAMRjI8Cmp1DzrMOuVUHVNMsgAJdlpnFAENb9JnbTlDUrlr7TmPTYLzGuqjRIqT1dfsW49e8n3hUTO7FtL1mJx)fG7kr56BU7bAjHCmLRCse45CTb1iqQSeU5ppgJLCdAL9xn4sDMqIcxo9SLN)fZJdm6pp]] )
 
 spec:RegisterPackSelector( "arms", "武器(黑科研)", "|T132292:0|t 武器",
     "如果你在|T132292:0|t武器天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
@@ -2356,16 +2343,4 @@ spec:RegisterPackSelector( "revenge", "复仇(黑科研)", "|T132353:0|t 复仇"
     "如果你在|T132292:0|t武器天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
     function( tab1, tab2, tab3 )
         return tab1 > max( tab2, tab3 ) and talent.improved_revenge.enabled == true and talent.bladestorm.enabled == false and talent.shockwave.enabled == false
-    end )
-
-spec:RegisterPackSelector( "arms_pvp", nil, "|T132292:0|t 武器PVP",
-    "PVP专用武器天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
-
-spec:RegisterPackSelector( "fury_pvp", nil, "|T132347:0|t 狂怒PVP",
-    "PVP专用狂怒天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
     end )

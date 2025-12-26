@@ -856,6 +856,7 @@ spec:RegisterStateExpr( "hunter_pet_low_health", function()
 end )
 
 
+
 local finish_raptor = setfenv( function()
     spend( class.abilities.raptor_strike.spends[ spells.raptor_strike ], "mana" )
 end, state )
