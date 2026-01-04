@@ -926,6 +926,125 @@ local enchant_ids = {
 local MainhandHasSpellpower = false
 spec:RegisterStateExpr( "mainhand_has_spellpower", function() return MainhandHasSpellpower end )
 
+-- ============================================
+-- 图腾位置追踪系统（基于真实玩家坐标）
+-- ============================================
+
+-- 图腾距离常量
+local TOTEM_MAX_DISTANCE = 999  -- 最大距离（码），用于表示"无限远"
+local TOTEM_MAX_DISTANCE_SQUARED = 0.999 * 0.999  -- 最大距离的平方（地图单位）
+
+-- 存储图腾召唤时的位置信息
+local TotemPositionData = {
+    earth = { x = 0, y = 0, mapID = 0, time = 0 },  -- 土图腾位置
+    fire = { x = 0, y = 0, mapID = 0, time = 0 },   -- 火图腾位置
+    water = { x = 0, y = 0, mapID = 0, time = 0 },  -- 水图腾位置
+    air = { x = 0, y = 0, mapID = 0, time = 0 },    -- 风图腾位置
+}
+
+-- 获取当前玩家位置（返回 x, y, mapID）
+local function GetCurrentPlayerPosition()
+    local map = C_Map.GetBestMapForUnit("player")
+    if not map then
+        return 0, 0, 0
+    end
+
+    local pos = C_Map.GetPlayerMapPosition(map, "player")
+    if not pos then
+        return 0, 0, map
+    end
+
+    local x, y = pos:GetXY()
+    return x or 0, y or 0, map
+end
+
+-- 计算两点之间距离的平方（用于性能优化，避免开方运算）
+-- 返回地图单位的平方值，不进行单位转换
+local function CalculateDistanceSquared(x1, y1, x2, y2)
+    local dx = (x2 - x1)
+    local dy = (y2 - y1)
+    return dx * dx + dy * dy
+end
+
+-- 记录图腾召唤位置
+-- @param totemType 图腾类型："earth", "fire", "water", "air"
+local function RecordTotemPosition(totemType)
+    local x, y, mapID = GetCurrentPlayerPosition()
+    if TotemPositionData[totemType] then
+        TotemPositionData[totemType].x = x
+        TotemPositionData[totemType].y = y
+        TotemPositionData[totemType].mapID = mapID
+        TotemPositionData[totemType].time = GetTime()
+    end
+end
+
+-- 获取玩家与指定类型图腾的距离平方（用于性能优化）
+-- @param totemType 图腾类型："earth", "fire", "water", "air"
+-- @return 距离的平方（地图单位），如果没有图腾或切换地图返回 TOTEM_MAX_DISTANCE_SQUARED
+local function GetDistanceToTotemSquared(totemType)
+    local totemData = TotemPositionData[totemType]
+    if not totemData or totemData.time == 0 then
+        return TOTEM_MAX_DISTANCE_SQUARED
+    end
+
+    local x, y, mapID = GetCurrentPlayerPosition()
+
+    -- 如果玩家切换了地图，返回最大值
+    if mapID ~= totemData.mapID then
+        return TOTEM_MAX_DISTANCE_SQUARED
+    end
+
+    return CalculateDistanceSquared(totemData.x, totemData.y, x, y)
+end
+
+-- 注册状态表达式：获取玩家与任意图腾的最小距离（性能优化版）
+spec:RegisterStateExpr( "totem_distance", function()
+    -- 使用平方值进行比较，初始值为最大距离的平方
+    local minDistanceSquared = TOTEM_MAX_DISTANCE_SQUARED
+
+    if buff.earth_totem.up then
+        minDistanceSquared = math.min(minDistanceSquared, GetDistanceToTotemSquared("earth"))
+    end
+    if buff.fire_totem.up then
+        minDistanceSquared = math.min(minDistanceSquared, GetDistanceToTotemSquared("fire"))
+    end
+    if buff.water_totem.up then
+        minDistanceSquared = math.min(minDistanceSquared, GetDistanceToTotemSquared("water"))
+    end
+    if buff.air_totem.up then
+        minDistanceSquared = math.min(minDistanceSquared, GetDistanceToTotemSquared("air"))
+    end
+
+    -- 如果没有图腾，返回0（用于兼容 totem_distance > 30 的判断）
+    if minDistanceSquared >= TOTEM_MAX_DISTANCE_SQUARED - 0.001 then  -- 接近最大值
+        return 0
+    end
+
+    -- 最后开方并转换为码
+    return math.sqrt(minDistanceSquared) * 100
+end )
+
+spec:RegisterStateExpr( "has_any_totem", function()
+      return buff.earth_totem.up or buff.fire_totem.up or
+             buff.water_totem.up or buff.air_totem.up
+end )
+
+-- 注册状态表达式：判断玩家是否远离图腾
+-- 标准：距离任意图腾超过40码认为远离
+spec:RegisterStateExpr( "player_far_from_totem", function()
+    if not ( buff.earth_totem.up or buff.fire_totem.up or
+             buff.water_totem.up or buff.air_totem.up ) then
+        return false
+    end
+
+    return totem_distance > 30
+end )
+
+-- 注册状态表达式：判断玩家是否接近图腾
+spec:RegisterStateExpr( "player_near_totem", function()
+    return not player_far_from_totem
+end )
+
 local AURA_APPLIED_EVENTS = {
     SPELL_AURA_APPLIED      = 1,
     SPELL_AURA_APPLIED_DOSE = 1,
@@ -1274,6 +1393,7 @@ spec:RegisterAbilities( {
             removeBuff( "water_totem" )
             summonTotem( "cleansing_totem" )
             applyBuff( "cleansing_totem" )
+            RecordTotemPosition( "water" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -1319,6 +1439,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "earth_elemental_totem" )
             applyBuff( "earth_elemental_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -1390,6 +1511,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "earthbind_totem" )
             applyBuff( "earthbind_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -1506,6 +1628,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "fire_elemental_totem" )
             applyBuff( "fire_elemental_totem" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -1553,6 +1676,7 @@ spec:RegisterAbilities( {
             removeBuff( "water_totem" )
             summonTotem( "fire_resistance_totem" )
             applyBuff( "fire_resistance_totem" )
+            RecordTotemPosition( "water" )  -- 记录图腾召唤位置
         end,
 
         copy = { 10537, 10538, 25563, 58737, 58739 },
@@ -1603,6 +1727,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "flametongue_totem" )
             applyBuff( "flametongue_totem" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
 
         copy = { 8249, 10526, 16387, 25557, 58649, 58652, 58656 },
@@ -1668,6 +1793,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "frost_resistance_totem" )
             applyBuff( "frost_resistance_totem" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
 
         copy = { 10478, 10479, 25560, 58741, 58745 },
@@ -1770,6 +1896,7 @@ spec:RegisterAbilities( {
             removeBuff( "air_totem" )
             summonTotem( "grounding_totem" )
             applyBuff( "grounding_totem" )
+            RecordTotemPosition( "air" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -1793,6 +1920,7 @@ spec:RegisterAbilities( {
             removeBuff( "water_totem" )
             summonTotem( "healing_stream_totem" )
             applyBuff( "healing_stream_totem" )
+            RecordTotemPosition( "water" )  -- 记录图腾召唤位置
         end,
 
         copy = { 6375, 6377, 10462, 10463, 25567, 58755, 58756, 58757 },
@@ -2006,6 +2134,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "magma_totem" )
             applyBuff( "magma_totem" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
 
         copy = { 10585, 10586, 10587, 25552, 58731, 58734 },
@@ -2031,6 +2160,7 @@ spec:RegisterAbilities( {
             removeBuff( "water_totem" )
             summonTotem( "mana_spring_totem" )
             applyBuff( "mana_spring_totem" )
+            RecordTotemPosition( "water" )  -- 记录图腾召唤位置
         end,
 
         copy = { 10495, 10496, 10497, 25570, 58771, 58773, 58774 },
@@ -2056,6 +2186,7 @@ spec:RegisterAbilities( {
             removeBuff( "water_totem" )
             summonTotem( "mana_tide_totem" )
             applyBuff( "mana_tide_totem" )
+            RecordTotemPosition( "water" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -2079,6 +2210,7 @@ spec:RegisterAbilities( {
             removeBuff( "air_totem" )
             summonTotem( "nature_resistance_totem" )
             applyBuff( "nature_resistance_totem" )
+            RecordTotemPosition( "air" )  -- 记录图腾召唤位置
         end,
 
         copy = { 10600, 10601, 25574, 58746, 58749 },
@@ -2200,6 +2332,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "searing_totem" )
             applyBuff( "searing_totem" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
 
         copy = { 6363, 6364, 6365, 10437, 10438, 25533, 58699, 58703, 58704 },
@@ -2224,6 +2357,7 @@ spec:RegisterAbilities( {
         handler = function ()
             removeBuff( "air_totem" )
             applyBuff( "sentry_totem" )
+            RecordTotemPosition( "air" )  -- 记录图腾召唤位置
         end,
 
         copy = { 6363, 6364, 6365, 10437, 10438, 25533 },
@@ -2271,6 +2405,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "stoneclaw_totem" )
             applyBuff( "stoneclaw_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
 
         copy = { 6390, 6391, 6392, 10427, 10428, 25525, 58580, 58581, 58582 },
@@ -2296,6 +2431,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "stoneskin_totem" )
             applyBuff( "stoneskin_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
 
         copy = { 8154, 8155, 10406, 10407, 10408, 25508, 25509, 58751, 58753 },
@@ -2341,6 +2477,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "strength_of_earth_totem" )
             applyBuff( "strength_of_earth_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
 
         copy = { 8160, 8161, 10442, 25361, 25528, 57622, 58643 },
@@ -2403,6 +2540,7 @@ spec:RegisterAbilities( {
             removeBuff( "fire_totem" )
             summonTotem( "totem_of_wrath" )
             applyBuff( "totem_of_wrath" )
+            RecordTotemPosition( "fire" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -2416,6 +2554,18 @@ spec:RegisterAbilities( {
 
         startsCombat = false,
         texture = 310733,
+
+        -- 智能判断：仅在满足以下条件时提示回收图腾
+        -- 1. 至少有一个图腾存在
+        usable = function()
+            -- 检查是否有图腾存在
+            if not ( buff.earth_totem.up or buff.fire_totem.up or
+                     buff.water_totem.up or buff.air_totem.up ) then
+                return false -- 没有图腾存在不应该推荐
+            end
+
+            return true
+        end,
 
         handler = function ()
             if buff.earth_totem.up then
@@ -2457,6 +2607,7 @@ spec:RegisterAbilities( {
             removeBuff( "earth_totem" )
             summonTotem( "tremor_totem" )
             applyBuff( "tremor_totem" )
+            RecordTotemPosition( "earth" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -2475,7 +2626,7 @@ spec:RegisterAbilities( {
         texture = 136148,
 
         handler = function ()
-            applyBuff( "water_breathing" )
+            applyBuff( "water_breathing" )    
         end,
     },
 
@@ -2492,7 +2643,7 @@ spec:RegisterAbilities( {
 
         handler = function ()
             removeBuff( "shield" )
-            applyBuff( "water_shield", nil, glyph.water_shield.enabled and 4 or 3 )
+            applyBuff( "water_shield", nil, glyph.water_shield.enabled and 4 or 3 )      
         end,
 
         copy = { 52129, 52131, 52134, 52136, 52138, 24398, 33736 },
@@ -2513,7 +2664,7 @@ spec:RegisterAbilities( {
         texture = 135863,
 
         handler = function ()
-            applyBuff( "water_walking" )
+            applyBuff( "water_walking" )                    
         end,
     },
 
@@ -2560,6 +2711,7 @@ spec:RegisterAbilities( {
             removeBuff( "air_totem" )
             summonTotem( "windfury_totem" )
             applyBuff( "windfury_totem" )
+            RecordTotemPosition( "air" )  -- 记录图腾召唤位置
         end,
     },
 
@@ -2622,6 +2774,7 @@ spec:RegisterAbilities( {
             removeBuff( "air_totem" )
             summonTotem( "wrath_of_air_totem" )
             applyBuff( "wrath_of_air_totem" )
+            RecordTotemPosition( "air" )  -- 记录图腾召唤位置
         end,
     },
 } )
