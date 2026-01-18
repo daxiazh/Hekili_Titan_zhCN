@@ -6,6 +6,25 @@ local class, state = Hekili.Class, Hekili.State
 
 local spec = Hekili:NewSpecialization( 6 )
 
+-- ============================================================================
+-- 泰坦服符文索引配置 by 风雪 20251228
+-- WotLK 标准布局: 1-2=鲜血, 3-4=邪恶, 5-6=冰霜
+-- 如果泰坦服使用不同布局，修改这里的索引
+-- ============================================================================
+local RUNE_INDEX = {
+    BLOOD = { 1, 2 },      -- 鲜血符文索引
+    UNHOLY = { 3, 4 },     -- 邪恶符文索引
+    FROST = { 5, 6 },      -- 冰霜符文索引
+}
+
+-- 获取符文冷却的辅助函数（带错误处理）
+local function SafeGetRuneCooldown( index )
+    local start, duration, ready = GetRuneCooldown( index )
+    start = start or 0
+    duration = duration or 10
+    return start, duration, ready
+end
+
 spec:RegisterResource( Enum.PowerType.RuneBlood, {
     rune_regen = {
         last = function ()
@@ -40,9 +59,9 @@ spec:RegisterResource( Enum.PowerType.RuneBlood, {
         local t = state.blood_runes
 
         for i = 1, 2 do
-            local start, duration, ready = GetRuneCooldown( i )
+            local runeIndex = RUNE_INDEX.BLOOD[ i ]
+            local start, duration, ready = SafeGetRuneCooldown( runeIndex )
 
-            start = start or 0
             duration = duration or ( 10 * state.haste )
 
             t.expiry[ i ] = ready and 0 or start + duration
@@ -177,9 +196,9 @@ spec:RegisterResource( Enum.PowerType.RuneFrost, {
         local t = state.frost_runes
 
         for i = 1, 2 do
-            local start, duration, ready = GetRuneCooldown( i + 4 )
+            local runeIndex = RUNE_INDEX.FROST[ i ]
+            local start, duration, ready = SafeGetRuneCooldown( runeIndex )
 
-            start = start or 0
             duration = duration or ( 10 * state.haste )
 
             t.expiry[ i ] = ready and 0 or start + duration
@@ -317,13 +336,13 @@ spec:RegisterResource( Enum.PowerType.RuneUnholy, {
     reset = function()
         local t = state.unholy_runes
 
-        for i = 3, 4 do
-            local start, duration, ready = GetRuneCooldown( i )
+        for i = 1, 2 do
+            local runeIndex = RUNE_INDEX.UNHOLY[ i ]
+            local start, duration, ready = SafeGetRuneCooldown( runeIndex )
 
-            start = start or 0
             duration = duration or ( 10 * state.haste )
 
-            t.expiry[ i - 2 ] = ready and 0 or start + duration
+            t.expiry[ i ] = ready and 0 or start + duration
             t.cooldown = duration
         end
 
@@ -549,11 +568,10 @@ spec:RegisterGlyphs( {
     [58671] = "obliterate",
     [59309] = "pestilence",
     [58657] = "plague_strike",
-    [60200] = "raise_dead",
     [58669] = "rune_strike",
     [59327] = "rune_tap",
     [58618] = "strangulate",
-    [58686] = "ghoul",
+    [60200] = "raise_dead",  -- 亡者复生雕文 (法术ID，物品ID是43673)
     [58635] = "unbreakable_armor",
     [63332] = "unholy_blight",
     [58676] = "vampiric_blood",
@@ -734,11 +752,37 @@ spec:RegisterAuras( {
         tick_time = 3,
         max_stack = 1,
         generate = function ( t )
+            -- 尝试多个可能的 spell ID
             local name, _, count, _, duration, expires, caster = FindUnitBuffByID( "pet", 63560 )
+            
+            -- 如果找不到，尝试用名字搜索
+            if not name then
+                for i = 1, 40 do
+                    local buffName, _, _, _, buffDuration, buffExpires, buffCaster, _, _, spellId = UnitBuff( "pet", i )
+                    if not buffName then break end
+                    -- 检查是否是食尸鬼狂乱 (Ghoul Frenzy)
+                    if spellId == 63560 or buffName == "Ghoul Frenzy" or buffName == "食尸鬼狂乱" then
+                        name = buffName
+                        duration = buffDuration
+                        expires = buffExpires
+                        caster = buffCaster
+                        break
+                    end
+                end
+            end
 
             if name then
                 t.name = name
                 t.count = 1
+                -- 修复：如果 duration 为 0 或 nil，使用默认的 30 秒
+                if not duration or duration == 0 then
+                    duration = 30
+                end
+                -- 修复：如果 expires 为 0 或 nil，使用当前时间 + duration
+                if not expires or expires == 0 then
+                    expires = GetTime() + duration
+                end
+                t.duration = duration
                 t.expires = expires
                 t.applied = expires - duration
                 t.caster = caster
@@ -898,10 +942,17 @@ spec:RegisterAuras( {
     death_rune_6 = {
         duration = 30,
         max_stack = 1,
-    }
+    },
+    -- 狮心 - 人类种族技能buff
+    lions_heart = {
+        id = 20599,
+        duration = 15,
+        max_stack = 1,
+    },
 } )
 
 local dodged_or_parried = 0
+local playerGUID = nil
 
 local misses = {
     DODGE = true,
@@ -909,9 +960,15 @@ local misses = {
 }
 
 spec:RegisterEvent( "COMBAT_LOG_EVENT_UNFILTERED", function()
-    local _, subtype, _,  sourceGUID, sourceName, _, _, destGUID, destName, destFlags, _, missType, _, _, _, _, _, critical = CombatLogGetCurrentEventInfo()
+    if not playerGUID then
+        playerGUID = UnitGUID("player")
+    end
+    
+    local _, subtype, _,  sourceGUID, sourceName, _, _, destGUID, destName, destFlags, _, missType = CombatLogGetCurrentEventInfo()
 
-    if destGUID == state.GUID and subtype:match( "_MISSED$" ) and misses[ missType ] then
+    -- 符文打击触发条件：死亡骑士躲闪或招架了敌人的攻击
+    -- destGUID 是被攻击的目标（玩家），missType 是 DODGE 或 PARRY
+    if destGUID == playerGUID and subtype:match( "_MISSED$" ) and misses[ missType ] then
         dodged_or_parried = GetTime()
     end
 end )
@@ -928,6 +985,46 @@ end )
 
 local GetRuneType, IsCurrentSpell = _G.GetRuneType, _G.IsCurrentSpell
 
+-- ============================================================================
+-- 泰坦服符文系统修复 by 风雪 20251228
+-- WotLK 符文布局: 1-2=鲜血, 3-4=邪恶, 5-6=冰霜
+-- 死亡符文类型: 通常为 4，但泰坦服可能不同
+-- ============================================================================
+
+-- 符文类型常量（兼容不同服务器）
+local RUNE_TYPE_BLOOD = 1
+local RUNE_TYPE_UNHOLY = 2  
+local RUNE_TYPE_FROST = 3
+local RUNE_TYPE_DEATH = 4
+
+-- 检测死亡符文类型（泰坦服可能使用不同的值）
+local function IsDeathRune( runeIndex )
+    local runeType = GetRuneType( runeIndex )
+    -- 死亡符文类型通常是 4，但也检查其他可能的值
+    -- 如果符文类型与其原始类型不同，且不是 0/nil，可能是死亡符文
+    if runeType == RUNE_TYPE_DEATH then
+        return true
+    end
+    
+    -- 备用检测：检查符文是否被转换
+    -- 鲜血符文(1-2)原始类型应该是1，邪恶(3-4)是2，冰霜(5-6)是3
+    local originalType
+    if runeIndex <= 2 then
+        originalType = RUNE_TYPE_BLOOD
+    elseif runeIndex <= 4 then
+        originalType = RUNE_TYPE_UNHOLY
+    else
+        originalType = RUNE_TYPE_FROST
+    end
+    
+    -- 如果当前类型与原始类型不同，可能是死亡符文
+    if runeType and runeType ~= originalType and runeType ~= 0 then
+        return true
+    end
+    
+    return false
+end
+
 -- 食尸鬼宠物注册 - 修复亡者复生有宠物仍显示问题 by 哑吡 20251226
 -- 有"亡者大师"天赋时为永久宠物(3600秒)，无天赋时持续60秒
 -- 食尸鬼NPC ID: 26125(普通), 可能还有其他变体
@@ -940,28 +1037,50 @@ spec:RegisterStateExpr( "ghoul_active", function()
 end )
 
 spec:RegisterHook( "reset_precast", function ()
+    -- 修复：使用更健壮的死亡符文检测 by 风雪 20251228
     for i = 1, 6 do
-        if GetRuneType( i ) == 4 then
+        if IsDeathRune( i ) then
             applyBuff( "death_rune_" .. i )
+        else
+            removeBuff( "death_rune_" .. i )
         end
     end
 
+    -- 符文打击检测：使用游戏API检测技能是否可用，并且符能>=20
     if IsCurrentSpell( class.abilities.rune_strike.id ) then
         start_rune_strike()
-        Hekili:Debug( "Starting Rune Strike, next swing in %.2f...", buff.rune_strike.remains )
-    elseif IsUsableSpell( class.abilities.rune_strike.id ) and dodged_or_parried > 0 and now - dodged_or_parried < 5 then
+    elseif IsUsableSpell( class.abilities.rune_strike.id ) and UnitPower( "player", Enum.PowerType.RunicPower ) >= 20 then
+        -- 游戏API显示技能可用且符能足够，直接应用buff
+        applyBuff( "rune_strike_usable", 5 )
+    elseif dodged_or_parried > 0 and now - dodged_or_parried < 5 then
+        -- 备用检测：战斗日志检测到躲闪/招架
         applyBuff( "rune_strike_usable", dodged_or_parried + 5 - now )
     end
     
-    -- 修复：强制更新食尸鬼宠物状态 by 哑吡 20251226
-    -- 直接使用游戏API检测，不依赖NPC ID匹配
-    if UnitExists("pet") and not UnitIsDead("pet") then
+    -- 修复：强制更新食尸鬼宠物状态和亡者复生冷却 by 哑吡 20251230
+    local petExists = UnitExists("pet") and not UnitIsDead("pet") and UnitHealth("pet") > 0
+    
+    -- 确保 pet.ghoul 表存在
+    if not rawget( state.pet, "ghoul" ) then
+        state.pet.ghoul = {}
+    end
+    
+    if petExists then
         -- 有宠物存活，设置食尸鬼为激活状态
         local duration = talent.master_of_ghouls.enabled and 3600 or 60
+        state.pet.ghoul.name = "ghoul"
         state.pet.ghoul.expires = state.now + duration
+        state.pet.ghoul.virtual = true
+        
+        -- 关键修复：同步亡者复生的实际冷却时间
+        local start, cdDuration = GetSpellCooldown( 46584 )
+        if start and start > 0 and cdDuration and cdDuration > 0 then
+            setCooldown( "raise_dead", start + cdDuration - state.now )
+        end
     else
         -- 没有宠物，设置食尸鬼为未激活状态
         state.pet.ghoul.expires = 0
+        state.pet.ghoul.virtual = false
     end
 end )
 
@@ -1082,7 +1201,12 @@ spec:RegisterAbilities( {
         cooldown = 120,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if unholy_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "unholy_runes",
 
         talent = "antimagic_zone",
@@ -1091,8 +1215,22 @@ spec:RegisterAbilities( {
 
         toggle = "defensives",
 
+        usable = function()
+            if unholy_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyBuff( "antimagic_zone" )
+            if unholy_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1104,11 +1242,39 @@ spec:RegisterAbilities( {
         cooldown = function() return 600 - ( 120 * talent.night_of_the_dead.rank ) end,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasFrost and 0 or 1) + (hasBlood and 0 or 1)
+            if missing <= death_runes then
+                return hasUnholy and 1 or 0
+            end
+            return 1
+        end,
         spendType = "unholy_runes",
-        spend2 = 1,
+        spend2 = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasFrost and 0 or 1) + (hasBlood and 0 or 1)
+            if missing <= death_runes then
+                return hasFrost and 1 or 0
+            end
+            return 1
+        end,
         spend2Type = "frost_runes",
-        spend3 = 1,
+        spend3 = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasFrost and 0 or 1) + (hasBlood and 0 or 1)
+            if missing <= death_runes then
+                return hasBlood and 1 or 0
+            end
+            return 1
+        end,
         spend3Type = "blood_runes",
 
         gain = 15,
@@ -1119,6 +1285,15 @@ spec:RegisterAbilities( {
 
         toggle = "cooldowns",
 
+        usable = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasFrost and 0 or 1) + (hasBlood and 0 or 1)
+            if missing <= death_runes then return true end
+            return false, "没有足够的符文"
+        end,
+
         timeToReady = function()
             return max( blood_runes.time_to_1, frost_runes.time_to_1, unholy_runes.time_to_1 )
         end,
@@ -1126,6 +1301,19 @@ spec:RegisterAbilities( {
         start = function ()
             gain( 15, "runic_power" )
             applyBuff( "army_of_the_dead" )
+            
+            local hasUnholy = unholy_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local deathRunesUsed = (hasUnholy and 0 or 1) + (hasFrost and 0 or 1) + (hasBlood and 0 or 1)
+            for _ = 1, deathRunesUsed do
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1137,36 +1325,32 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        -- 血沸消耗鲜血符文，死亡符文>2时可以替代 by 哑吡 20251225
+        -- 血沸消耗鲜血符文 - 灵活版 by 哑吡 20250102
         spend = 1,
         spendType = function()
             -- 优先使用鲜血符文
             if blood_runes.current > 0 then return "blood_runes" end
-            -- 死亡符文>2时可以替代鲜血符文
-            if death_runes > 2 then return "death_runes" end
+            -- 有死亡符文时可以替代
+            if death_runes > 0 then return "death_runes" end
             return "blood_runes"
         end,
 
         startsCombat = true,
         texture = 237513,
 
-        -- 血液沸腾条件：需要目标有疾病且多目标 by 哑吡 20251225
+        -- 血液沸腾条件 - 灵活版 by 哑吡 20250102
         usable = function()
-            -- 检查是否有可用符文（鲜血符文，或死亡符文>2）
-            if blood_runes.current == 0 and death_runes <= 2 then
+            -- 有鲜血符文或死亡符文就可以用
+            if blood_runes.current == 0 and death_runes == 0 then
                 return false, "没有可用符文"
-            end
-            -- 计算10码内有疾病的敌人数量
-            local enemiesWithDisease = countEnemiesWithDisease()
-            -- 检查最少目标数
-            local minTargets = settings.blood_boil_min_targets or 2
-            if enemiesWithDisease < minTargets then
-                return false, "有疾病的目标数量不足"
             end
             return true
         end,
 
         handler = function ()
+            -- 血液沸腾对所有10码内敌人造成暗影伤害
+            -- 对有血之疫病或冰霜热疫的目标造成额外伤害
+            active_dot.blood_boil = active_enemies
         end,
 
         copy = { 48721, 49939, 49940, 49941 } --补全各等级技能by风雪 20250901
@@ -1180,7 +1364,12 @@ spec:RegisterAbilities( {
         cooldown = 1,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         startsCombat = false,
@@ -1188,9 +1377,23 @@ spec:RegisterAbilities( {
 
         nobuff = "blood_presence",
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             removeBuff( "presence" )
             applyBuff( "blood_presence" )
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1202,7 +1405,12 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         gain = 10,
@@ -1211,12 +1419,26 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 135772,
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             if talent.reaping.rank == 3 then
                 if blood_runes.current == 0 then applyBuff( "death_rune_1")
                 else applyBuff( "death_rune_2" ) end
             end
             if talent.desolation.enabled then applyBuff( "desolation" ) end
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
 
         copy = { 49926, 49927, 49928, 49929, 49930 }
@@ -1250,7 +1472,12 @@ spec:RegisterAbilities( {
         cooldown = 60,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡20260103
+        spend = function()
+            if unholy_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "unholy_runes",
 
         gain = 10,
@@ -1262,8 +1489,22 @@ spec:RegisterAbilities( {
 
         -- toggle = "defensives", 先注释掉，确保白骨之盾在默认技能下，修改 by 风雪20250413
 
+        usable = function()
+            if unholy_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyBuff( "bone_shield", nil, glyph.bone_shield.enabled and 4 or 3 )
+            if unholy_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1275,7 +1516,16 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20251228
+        spend = function() 
+            if frost_runes.current >= 1 then
+                return 1
+            elseif death_runes > 0 then
+                return 0
+            else
+                return 1
+            end
+        end,
         spendType = "frost_runes",
 
         gain = function() return 10 + ( 2.5 * talent.chill_of_the_grave.rank ) end,
@@ -1287,6 +1537,15 @@ spec:RegisterAbilities( {
         handler = function ()
             applyDebuff( "target", "frost_fever" )
             applyDebuff( "target", "chains_of_ice" )
+            -- 修复：当使用死亡符文时，移除一个死亡符文buff by 哑吡 20251228
+            if frost_runes.current == 0 and death_runes > 0 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1308,6 +1567,8 @@ spec:RegisterAbilities( {
         -- TODO:  Determine if I can rely on the UI for usability of Corpse Explosion.
 
         handler = function ()
+            -- 尸体爆炸对10码内所有敌人造成暗影伤害
+            -- 需要附近有尸体
         end,
         copy = { 49158, 51325, 51326, 51327, 51328 } --补全各等级技能by风雪 20250901
         
@@ -1362,11 +1623,47 @@ spec:RegisterAbilities( {
         cooldown = function () return 30 - ( 5 * talent.morbidity.rank ) end,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡20260103
+        -- 需要3个符文：邪恶+鲜血+冰霜，死亡符文可以替代任意一个
+        spend = function()
+            -- 计算缺少的符文数量
+            local hasUnholy = unholy_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasBlood and 0 or 1) + (hasFrost and 0 or 1)
+            
+            -- 如果有足够的死亡符文补足缺口
+            if missing <= death_runes then
+                return hasUnholy and 1 or 0
+            end
+            return 1
+        end,
         spendType = "unholy_runes",
-        spend2 = 1,
+        
+        spend2 = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasBlood and 0 or 1) + (hasFrost and 0 or 1)
+            
+            if missing <= death_runes then
+                return hasBlood and 1 or 0
+            end
+            return 1
+        end,
         spend2Type = "blood_runes",
-        spend3 = 1,
+        
+        spend3 = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasBlood and 0 or 1) + (hasFrost and 0 or 1)
+            
+            if missing <= death_runes then
+                return hasFrost and 1 or 0
+            end
+            return 1
+        end,
         spend3Type = "frost_runes",
 
         gain = 15,
@@ -1375,8 +1672,35 @@ spec:RegisterAbilities( {
         startsCombat = false,
         texture = 136144,
 
+        -- 修复：添加 usable 检查，支持死亡符文替代 by 哑吡 20260103
+        usable = function()
+            local hasUnholy = unholy_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local missing = (hasUnholy and 0 or 1) + (hasBlood and 0 or 1) + (hasFrost and 0 or 1)
+            
+            -- 缺少的符文数量 <= 死亡符文数量
+            if missing <= death_runes then return true end
+            return false, "没有足够的符文"
+        end,
+
         handler = function ()
             applyBuff( "death_and_decay" )
+            
+            -- 修复：当使用死亡符文替代时，移除对应的死亡符文buff by 哑吡 20260103
+            local hasUnholy = unholy_runes.current >= 1
+            local hasBlood = blood_runes.current >= 1
+            local hasFrost = frost_runes.current >= 1
+            local deathRunesUsed = (hasUnholy and 0 or 1) + (hasBlood and 0 or 1) + (hasFrost and 0 or 1)
+            
+            for _ = 1, deathRunesUsed do
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
 
         copy = { 49936, 49937, 49938 }
@@ -1411,7 +1735,12 @@ spec:RegisterAbilities( {
         cooldown = 60,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡20260103
+        spend = function()
+            if unholy_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "unholy_runes",
 
         startsCombat = false,
@@ -1419,7 +1748,22 @@ spec:RegisterAbilities( {
 
         toggle = "cooldowns",
 
+        usable = function()
+            if unholy_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
+            -- 死亡之门，传送到黑锋要塞
+            if unholy_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1471,9 +1815,25 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持，与 obliterate 保持一致 by 哑吡 20260103
+        -- 第一优先级：冰霜≥1 且 邪恶≥1 → 返回 1
+        -- 第二优先级：冰霜≥1 且 邪恶=0 且 死亡≥1 → 返回 1
+        -- 第三优先级：冰霜=0 且 邪恶≥1 且 死亡≥1 → 返回 0
+        -- 第四优先级：冰霜=0 且 邪恶=0 且 死亡≥2 → 返回 0
+        spend = function()
+            return (frost_runes.current >= 1 and unholy_runes.current >= 1) and 1 or
+            (frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1) and 1 or
+            (frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1) and 0 or
+            (frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2) and 0 or 1
+        end,
         spendType = "frost_runes",
-        spend2 = 1,
+
+        spend2 = function()
+            return (frost_runes.current >= 1 and unholy_runes.current >= 1) and 1 or
+            (frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1) and 0 or
+            (frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1) and 1 or
+            (frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2) and 0 or 1
+        end,
         spend2Type = "unholy_runes",
 
         gain = function() return 15 + ( 2.5 * talent.dirge.rank ) end,
@@ -1481,6 +1841,19 @@ spec:RegisterAbilities( {
 
         startsCombat = true,
         texture = 237517,
+
+        -- 修复：添加 usable 检查，支持死亡符文替代 by 哑吡 20260103
+        usable = function()
+            -- 有冰霜+邪恶符文
+            if frost_runes.current >= 1 and unholy_runes.current >= 1 then return true end
+            -- 有冰霜+死亡符文
+            if frost_runes.current >= 1 and death_runes >= 1 then return true end
+            -- 有邪恶+死亡符文
+            if unholy_runes.current >= 1 and death_runes >= 1 then return true end
+            -- 有2个死亡符文
+            if death_runes >= 2 then return true end
+            return false, "没有足够的符文"
+        end,
 
         healing = function()
             local base = ( 0.05 + ( 0.0125 * talent.improved_death_strike.rank ) ) * health.max
@@ -1493,6 +1866,23 @@ spec:RegisterAbilities( {
 
         handler = function ()
             health.current = min( health.max, health.current + action.death_strike.healing )
+            -- 修复：当使用死亡符文替代冰霜或邪恶符文时，移除对应的死亡符文buff by 哑吡 20260103
+            local deathRunesUsed = 0
+            if frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1 then
+                deathRunesUsed = 1
+            elseif frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1 then
+                deathRunesUsed = 1
+            elseif frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2 then
+                deathRunesUsed = 2
+            end
+            for _ = 1, deathRunesUsed do
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
         copy = { 49999, 45463, 49923, 49924 }
     },
@@ -1547,7 +1937,12 @@ spec:RegisterAbilities( {
         cooldown = 1,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if frost_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "frost_runes",
 
         startsCombat = false,
@@ -1555,9 +1950,23 @@ spec:RegisterAbilities( {
 
         nobuff = "frost_presence",
 
+        usable = function()
+            if frost_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             removeBuff( "presence" )
             applyBuff( "frost_presence" )
+            if frost_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1591,7 +2000,12 @@ spec:RegisterAbilities( {
         cooldown = 10,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if unholy_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "unholy_runes",
 
         gain = 10,
@@ -1603,11 +2017,21 @@ spec:RegisterAbilities( {
 
         usable = function()
             if pet.ghoul.down then return false, "requires a living ghoul" end
-            return true
+            if unholy_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
         end,
 
         handler = function ()
             applyBuff( "ghoul_frenzy" )
+            if unholy_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1619,13 +2043,13 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        -- 心脏打击消耗鲜血符文，死亡符文>2时可以替代 by 哑吡 20251225
+        -- 心脏打击消耗鲜血符文 - 灵活版 by 哑吡 20250102
         spend = 1,
         spendType = function()
             -- 优先使用鲜血符文
             if blood_runes.current > 0 then return "blood_runes" end
-            -- 死亡符文>2时可以替代鲜血符文
-            if death_runes > 2 then return "death_runes" end
+            -- 有死亡符文时可以替代
+            if death_runes > 0 then return "death_runes" end
             return "blood_runes"
         end,
 
@@ -1636,9 +2060,10 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 135675,
 
-        -- 检查是否有可用符文（鲜血符文，或死亡符文>2）by 哑吡 20251225
+        -- 心脏打击 - 灵活版 by 哑吡 20250102
         usable = function()
-            if blood_runes.current == 0 and death_runes <= 2 then
+            -- 有鲜血符文或死亡符文就可以用
+            if blood_runes.current == 0 and death_runes == 0 then
                 return false, "没有可用符文"
             end
             return true
@@ -1679,13 +2104,23 @@ spec:RegisterAbilities( {
         cooldown = 8,
         gcd = "spell",
 
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
         spend = function()
             if buff.freezing_fog.up then return 0 end
+            -- 有冰霜符文优先用冰霜
+            if frost_runes.current >= 1 and unholy_runes.current >= 1 then return 1 end
+            if frost_runes.current >= 1 and death_runes >= 1 then return 1 end
+            if unholy_runes.current >= 1 and death_runes >= 1 then return 0 end
+            if death_runes >= 2 then return 0 end
             return 1
         end,
         spendType = "frost_runes",
         spend2 = function()
             if buff.freezing_fog.up then return 0 end
+            if frost_runes.current >= 1 and unholy_runes.current >= 1 then return 1 end
+            if frost_runes.current >= 1 and death_runes >= 1 then return 0 end
+            if unholy_runes.current >= 1 and death_runes >= 1 then return 1 end
+            if death_runes >= 2 then return 0 end
             return 1
         end,
         spend2Type = "unholy_runes",
@@ -1697,6 +2132,16 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 135833,
 
+        -- 修复：添加 usable 检查，支持死亡符文替代 by 哑吡 20260103
+        usable = function()
+            if buff.freezing_fog.up then return true end
+            if frost_runes.current >= 1 and unholy_runes.current >= 1 then return true end
+            if frost_runes.current >= 1 and death_runes >= 1 then return true end
+            if unholy_runes.current >= 1 and death_runes >= 1 then return true end
+            if death_runes >= 2 then return true end
+            return false, "没有足够的符文"
+        end,
+
         handler = function ()
             removeBuff( "deathchill" )
             removeBuff( "freezing_fog" )
@@ -1705,6 +2150,26 @@ spec:RegisterAbilities( {
             if glyph.howling_blast.enabled then
                 applyDebuff( "target", "frost_fever" )
                 active_dot.frost_fever = active_enemies
+            end
+            
+            -- 修复：当使用死亡符文替代时，移除对应的死亡符文buff by 哑吡 20260103
+            if not buff.freezing_fog.up then
+                local deathRunesUsed = 0
+                if frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1 then
+                    deathRunesUsed = 1
+                elseif frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1 then
+                    deathRunesUsed = 1
+                elseif frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2 then
+                    deathRunesUsed = 2
+                end
+                for _ = 1, deathRunesUsed do
+                    for i = 1, 6 do
+                        if buff[ "death_rune_" .. i ].up then
+                            removeBuff( "death_rune_" .. i )
+                            break
+                        end
+                    end
+                end
             end
         end,
         copy = { 49184, 51409, 51410, 51411 } --补全各等级技能by风雪 20250901
@@ -1763,8 +2228,18 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        -- spend = 1,
-        spend = function() return death_runes > 0 and 0 or 1 end,  -- 当存在死亡符文时不消耗冰霜符文，修改 by 风雪20250412     
+        -- 修复：只有当没有冰霜符文时才使用死亡符文 by 哑吡 20251228
+        -- 原逻辑：death_runes > 0 就返回 0，这会导致优先使用死亡符文
+        -- 新逻辑：只有当 frost_runes.current == 0 且 death_runes > 0 时才返回 0
+        spend = function() 
+            if frost_runes.current >= 1 then
+                return 1  -- 有冰霜符文，消耗冰霜符文
+            elseif death_runes > 0 then
+                return 0  -- 没有冰霜符文但有死亡符文，不消耗冰霜符文（在handler中消耗死亡符文）
+            else
+                return 1  -- 没有任何可用符文，返回1（技能不可用）
+            end
+        end,
         spendType = "frost_runes",   
 
         gain = function() return 10 + ( 2.5 * talent.chill_of_the_grave.rank ) end,
@@ -1773,9 +2248,25 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 237526,
 
+        -- 修复：添加usable检查，防止重复推荐 by 哑吡 20251228
+        usable = function()
+            if frost_runes.current >= 1 then return true end
+            if death_runes > 0 then return true end
+            return false, "没有可用的冰霜符文或死亡符文"
+        end,
+
         handler = function ()
             removeStack( "killing_machine" )
-            applyDebuff( "frost_fever" )
+            applyDebuff( "target", "frost_fever" )
+            -- 修复：当使用死亡符文时，移除一个死亡符文buff by 哑吡 20251228
+            if frost_runes.current == 0 and death_runes > 0 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
 
         copy = { 49896, 49903, 49904, 49909 }
@@ -1809,7 +2300,12 @@ spec:RegisterAbilities( {
         cooldown = 180,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         talent = "mark_of_blood",
@@ -1818,8 +2314,22 @@ spec:RegisterAbilities( {
 
         toggle = "defensives",
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyDebuff( "target", "mark_of_blood", nil, 20 )
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1889,6 +2399,25 @@ spec:RegisterAbilities( {
                 removeDebuff( "target", "blood_plague" )
                 removeDebuff( "target", "crypt_fever" )
             end
+            -- 修复：当使用死亡符文替代冰霜或邪恶符文时，移除对应的死亡符文buff by 哑吡 20251228
+            local deathRunesUsed = 0
+            -- 计算需要消耗的死亡符文数量
+            if frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1 then
+                deathRunesUsed = 1  -- 死亡符文替代冰霜符文
+            elseif frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1 then
+                deathRunesUsed = 1  -- 死亡符文替代邪恶符文
+            elseif frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2 then
+                deathRunesUsed = 2  -- 死亡符文替代两个符文
+            end
+            -- 移除对应数量的死亡符文buff
+            for _ = 1, deathRunesUsed do
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
 
         copy = { 51423, 51424, 51425 }
@@ -1902,14 +2431,33 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if frost_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "frost_runes",
 
         startsCombat = false,
         texture = 237528,
 
+        usable = function()
+            if frost_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyBuff( "path_of_frost" )
+            if frost_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -1947,6 +2495,16 @@ spec:RegisterAbilities( {
             if not ( dot.frost_fever.ticking and dot.blood_plague.ticking ) then
                 return false, "目标没有疾病"
             end
+            
+            -- 疾病雕文检查：有雕文时可以刷新主目标疾病 by 哑吡 20260101
+            if glyph.disease.enabled then
+                -- 有疾病雕文：检查主目标疾病是否需要刷新（剩余时间<6秒）
+                local needRefresh = dot.frost_fever.remains < 6 or dot.blood_plague.remains < 6
+                if needRefresh then
+                    return true
+                end
+            end
+            
             -- 使用实时检查：计算缺少疾病的敌人数量
             local missingCount = countEnemiesMissingDisease()
             if missingCount == 0 then
@@ -1983,7 +2541,17 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20251228
+        -- 只有当没有邪恶符文时才使用死亡符文
+        spend = function() 
+            if unholy_runes.current >= 1 then
+                return 1  -- 有邪恶符文，消耗邪恶符文
+            elseif death_runes > 0 then
+                return 0  -- 没有邪恶符文但有死亡符文，不消耗邪恶符文（在handler中消耗死亡符文）
+            else
+                return 1  -- 没有任何可用符文，返回1（技能不可用）
+            end
+        end,
         spendType = "unholy_runes",
 
         gain = function() return 10 + ( 2.5 * talent.dirge.rank ) end,
@@ -1992,8 +2560,24 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 237519,
 
+        -- 修复：添加usable检查，防止重复推荐 by 哑吡 20251228
+        usable = function()
+            if unholy_runes.current >= 1 then return true end
+            if death_runes > 0 then return true end
+            return false, "没有可用的邪恶符文或死亡符文"
+        end,
+
         handler = function ()
             applyDebuff( "target", "blood_plague" )
+            -- 修复：当使用死亡符文时，移除一个死亡符文buff by 哑吡 20251228
+            if unholy_runes.current == 0 and death_runes > 0 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
             -- TODO: talent.desecration effect?
         end,
 
@@ -2012,11 +2596,13 @@ spec:RegisterAbilities( {
         texture = 136143,
 
         handler = function ()
+            -- 复活盟友，将死亡的队友复活为食尸鬼
         end,
     },
 
 
-    -- Raises a Ghoul to fight by your side.  If no humanoid corpse that yields experience or honor is available, you must supply Corpse Dust to complete the spell.  You can have a maximum of one Ghoul at a time.  Lasts 1 min.
+    -- Raises a Ghoul to fight by your side.
+    -- 修复：亡者复生技能ID改回46584 by 哑吡 20251230
     raise_dead = {
         id = 46584,
         cast = 0,
@@ -2028,25 +2614,22 @@ spec:RegisterAbilities( {
         startsCombat = false,
         texture = 136119,
 
-        item = function()
-            if glyph.raise_dead.enabled then return end
-            return 37201
-        end,
-        bagItem = function()
-            if glyph.raise_dead.enabled then return end
-            return true
-        end,
-
-        -- toggle = function() --- 取消亡者复生天赋切换群组功能，因插件不能在切换后自动重置，需要手动rl下，怕遗忘。 by 风雪20250414
-        --    if talent.master_of_ghouls.enabled then return end
-        --    return "cooldowns"
-        -- end,
-
-        -- 修复：亡者复生有宠物仍显示优先级问题 by 哑吡 20251226
-        -- 使用游戏API直接检测宠物状态，确保检测准确
+        -- 修复：有食尸鬼时不推荐亡者复生 by 哑吡 20251230
+        -- 修复：没有雕文时需要检查尸尘材料 by 哑吡 20251231
+        -- 尸尘物品ID: 37201, 亡者复生雕文spellID: 60200
         usable = function() 
-            local hasPet = UnitExists("pet") and not UnitIsDead("pet")
-            return not hasPet, "cannot have a pet" 
+            if pet.ghoul.active then
+                return false, "already have a ghoul"
+            end
+            -- 如果没有亡者复生雕文，需要检查尸尘材料
+            local has_glyph = glyph.raise_dead and glyph.raise_dead.enabled
+            if not has_glyph then
+                local corpse_dust_count = GetItemCount( 37201 )
+                if corpse_dust_count == 0 then
+                    return false, "需要尸尘材料（没有亡者复生雕文）"
+                end
+            end
+            return true
         end,
 
         -- 修复：根据天赋动态设置食尸鬼持续时间 by 哑吡 20251226
@@ -2087,7 +2670,12 @@ spec:RegisterAbilities( {
         cooldown = function () return 60 - ( talent.improved_rune_tap.rank * 10 ) end,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         talent = "rune_tap",
@@ -2096,8 +2684,22 @@ spec:RegisterAbilities( {
 
         toggle = "cooldowns",
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             gain( ( 0.1 + 0.33 * talent.improved_rune_tap.rank ) * health.max, "health" )
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -2109,9 +2711,21 @@ spec:RegisterAbilities( {
         cooldown = 0,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持，与 obliterate/death_strike 保持一致 by 哑吡 20260103
+        spend = function()
+            return (frost_runes.current >= 1 and unholy_runes.current >= 1) and 1 or
+            (frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1) and 1 or
+            (frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1) and 0 or
+            (frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2) and 0 or 1
+        end,
         spendType = "frost_runes",
-        spend2 = 1,
+
+        spend2 = function()
+            return (frost_runes.current >= 1 and unholy_runes.current >= 1) and 1 or
+            (frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1) and 0 or
+            (frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1) and 1 or
+            (frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2) and 0 or 1
+        end,
         spend2Type = "unholy_runes",
 
         gain = function() return 15 + ( 2.5 * talent.dirge.rank ) end,
@@ -2121,8 +2735,33 @@ spec:RegisterAbilities( {
         startsCombat = true,
         texture = 237530,
 
+        -- 修复：添加 usable 检查，支持死亡符文替代 by 哑吡 20260103
+        usable = function()
+            if frost_runes.current >= 1 and unholy_runes.current >= 1 then return true end
+            if frost_runes.current >= 1 and death_runes >= 1 then return true end
+            if unholy_runes.current >= 1 and death_runes >= 1 then return true end
+            if death_runes >= 2 then return true end
+            return false, "没有足够的符文"
+        end,
+
         handler = function ()
-            -- TODO: talent.desecration effect?
+            -- 修复：当使用死亡符文替代时，移除对应的死亡符文buff by 哑吡 20260103
+            local deathRunesUsed = 0
+            if frost_runes.current == 0 and unholy_runes.current >= 1 and death_runes >= 1 then
+                deathRunesUsed = 1
+            elseif frost_runes.current >= 1 and unholy_runes.current == 0 and death_runes >= 1 then
+                deathRunesUsed = 1
+            elseif frost_runes.current == 0 and unholy_runes.current == 0 and death_runes >= 2 then
+                deathRunesUsed = 2
+            end
+            for _ = 1, deathRunesUsed do
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
 
         copy = { 55090, 55265, 55270, 55271 } --添加高等级技能，by风雪 20250731
@@ -2136,7 +2775,12 @@ spec:RegisterAbilities( {
         cooldown = function() return glyph.strangulate.enabled and 100 or 120 end,
         gcd = "spell",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         gain = 1,
@@ -2149,8 +2793,22 @@ spec:RegisterAbilities( {
 
         timeToReady = state.timeToInterrupt,
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             interrupt()
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -2185,7 +2843,12 @@ spec:RegisterAbilities( {
         cooldown = 60,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if frost_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "frost_runes",
 
         gain = 10,
@@ -2197,13 +2860,28 @@ spec:RegisterAbilities( {
 
         -- toggle = "cooldowns", 取消加入爆发循环组，改为默认循环组 by风雪 20250803
 
+        usable = function()
+            if frost_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyBuff( "unbreakable_armor" )
+            if frost_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
 
     -- Induces a friendly unit into a killing frenzy for 30 sec.  The target is Enraged, which increases their physical damage by 20%, but causes them to lose health equal to 1% of their maximum health every second.
+    -- 狂热/邪恶狂热 - Hysteria/Unholy Frenzy 是同一个技能
     unholy_frenzy = {
         id = 49016,
         cast = 0,
@@ -2219,6 +2897,8 @@ spec:RegisterAbilities( {
         handler = function ()
             applyBuff( "unholy_frenzy" )
         end,
+
+        copy = "hysteria",  -- 添加别名，让APL中的hysteria也能识别
     },
 
 
@@ -2229,7 +2909,12 @@ spec:RegisterAbilities( {
         cooldown = 1,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if unholy_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "unholy_runes",
 
         startsCombat = false,
@@ -2237,9 +2922,23 @@ spec:RegisterAbilities( {
 
         nobuff = "unholy_presence",
 
+        usable = function()
+            if unholy_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             removeBuff( "presence" )
             applyBuff( "unholy_presence" )
+            if unholy_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
@@ -2251,7 +2950,12 @@ spec:RegisterAbilities( {
         cooldown = 60,
         gcd = "off",
 
-        spend = 1,
+        -- 修复：添加死亡符文支持 by 哑吡 20260103
+        spend = function()
+            if blood_runes.current >= 1 then return 1 end
+            if death_runes >= 1 then return 0 end
+            return 1
+        end,
         spendType = "blood_runes",
 
         gain = 10,
@@ -2263,13 +2967,27 @@ spec:RegisterAbilities( {
 
         toggle = "defensives",
 
+        usable = function()
+            if blood_runes.current >= 1 then return true end
+            if death_runes >= 1 then return true end
+            return false, "没有可用符文"
+        end,
+
         handler = function ()
             applyBuff( "vampiric_blood" )
             health.max = health.max * 1.15
+            if blood_runes.current == 0 and death_runes >= 1 then
+                for i = 1, 6 do
+                    if buff[ "death_rune_" .. i ].up then
+                        removeBuff( "death_rune_" .. i )
+                        break
+                    end
+                end
+            end
         end,
     },
 
-    -- 自动攻击 - 后备技能
+    -- 自动攻击 - 后备技能（只在没有其他技能可用时由APL推荐）
     auto_attack = {
         id = 6603,
         cast = 0,
@@ -2277,7 +2995,9 @@ spec:RegisterAbilities( {
         gcd = "off",
 
         startsCombat = true,
-        texture = 135641,
+        texture = function()
+            return GetInventoryItemTexture("player", 16) or 135641
+        end,
 
         handler = function()
         end
@@ -2302,6 +3022,47 @@ spec:RegisterAbilities( {
 
         handler = function()
             -- 晕眩效果由宠物处理
+        end,
+    },
+
+    -- 狮心 - 人类种族技能
+    -- 使你的爆击几率提高15%，持续15秒。3分钟冷却
+    lions_heart = {
+        id = 20599,
+        cast = 0,
+        cooldown = 180,
+        gcd = "off",
+
+        startsCombat = false,
+        texture = 304711,
+
+        toggle = "cooldowns",
+
+        usable = function()
+            return IsSpellKnown(20599), "requires human race"
+        end,
+
+        handler = function()
+            applyBuff( "lions_heart" )
+        end,
+    },
+
+    -- 狂热 - 血DK天赋技能
+    -- 使友方目标进入狂热状态，物理伤害提高20%，但每秒损失1%最大生命值，持续30秒
+    hysteria = {
+        id = 49016,
+        cast = 0,
+        cooldown = 180,
+        gcd = "off",
+
+        talent = "unholy_frenzy",
+        startsCombat = false,
+        texture = 237512,
+
+        toggle = "cooldowns",
+
+        handler = function()
+            applyBuff( "unholy_frenzy" )
         end,
     },
 } )
@@ -2396,42 +3157,30 @@ spec:RegisterSetting("dk_special_footer", nil, {
     name = "\n\n"
 })
 
-spec:RegisterPack( "双持邪(新手盒子)", 20241209, [[Hekili:TV1wVTTrw4FlgfqqgPqROLJRlGKEyFA38GFr9zsnICKeHPifiPSJkee822SWU1D3IffPD3wGI(qrlkW2KcSy3fboO)yQLC6t5VWEgos8YWz4qrkNlydcqCc5zo3MZLVZm0QkQVNAhdKpw9O9QV3(k7v)DRTNsJ937Du74pDmwTZyK(XObW)Wgnc(7f)1lxE5F63(GFuB5dF8Yl(KB(Q)2I)5NriBQLdYGWopNjU6aPQD6nX0Y)pAR2JJm2t5U7d0ogRRE0bQDgAAyGPuI90v78SF5VF9)9hx(XN9Sp8PxF1xU4bNFZt((F7bF6np9Nw8np56N8x(d4JnTmx(ZxS4YhEZfNV48)91p9R)1Z(G53lufF(vNFZN)ZX1Zt1T65C)A6oJE(vxS4NUCXd)OLF1)cOy(9O)C5xFg8338p(OvS)SZw(fFFOqE(vx(Sh9FwC(JtA7wME(Eel3YSpg(5rbEvKUVPJTAhtDCpNj2gA9DC9n9NyaUgSnQNf2q93R6dofc1rpPJURPp21eP2zN5DhJ9RHSmpbhXqxKPhwZadEBy1neUAolfwK)qnyl1xL8h4)3hnXYpLopYKOVUy87VrkBVj97xBI9qhRPAJDXEyBDCTjJN3TY8UuwxZBYOro2AdqUdCMAHR5BocR5zceoVBZ5DBupsjyyu2g7AP3ZYXXiLWH36JSW2(1mhn215eSHgRAUIR5vxBNuxtkwIQUVqvnqph64AR50x7utB4X1mCo1oIBjFjHB3nBU1ZXg0SHMyldgwf7ne(CqPI1EhHREigz5pS2yD)GTX9J5A0rwwA0)JgjtHMVOrlNeKXaC(qHCMSYtWAyB8itS38UTM3vjM(nXwiV9iH4h9U5MZTZnNroyA(dSHd1s6HIYGUvdoZkEtCIzrI3eNOTsvhH8Ghqw0GHotS8sRIjdDKKoK7ayXjc5ja(G4f5g7q)z86B(0nx26HtaEaYzKhVQHzXVSRyz44VoMWcnycPcJ(XM2dcclQoV7QWaiue7rR(47OncDFihdsd0DCSi(QA0Q6iOKTbwhnTMlEeY0gIO3nMYfianpFxZJLuFALI131bc47Jpbcxy0l6R2gQLP(uyXt0hM9EBw6JmN4QI5JXE(MwbztjQJtQNSpOtRjNYQTHTfjXSR8ccDG10Xdxzf(OXrnJMnBE341wHAuhuFT2gxv1N46c5Lu1uzTXKH(ImMszVCBkWhvpHTfQQz3wacLg5CY6ndFOrkKHAafsr0g(jlMZOaz3xO6QAQaCrhluWwmXkO2e7BcnfIeBqPPV5GHqqC4BM39WBLWakNIs8e3qI7(5DsMUf)5jkpefaawyK0XJg7CkuOMqK2Py0y4HGsOu)wjxRSETa(iNUGaYA3L1h3ZX0kW4su7EimgJlmNb0wfPRJTWUio1PvsukNb5hlTIlQxL2o3zWaaV4AdXlWSaVIPUwWUr0MfbZrDAcnjMSQG1g6syHKUkpol2RiN97uojuVEj26OuQVERtCBPm77KULftq1wORvo6kZjdzJw)gOiYPlLR2thMmFqCqak5VLBIsOhk3NMhnSWwscydkIBTkE3iYkYC7uUUjJdbTIcWitgO2(9tUu58pLTNcjNI4(VHSNb(FusDUvGnJ6SMTqrCtDr1oLl3vn2ZfTzxdYpyYXxetaqBwiUNkPKD2rWn2MLvk0Wcr2axmdRnbHvsASflqVXJvukmKBnOIfnQLfy5RKty8YAMH8HKtmw8Qcm(ngo(ULhrEOpg5oAkPwQ)q6rAuJ3yCCiADeezRvoW4uiOz5ixOZ8NOjvZpA(1wQIvrZCIRrsa0x4PHexviJslvY4DeR4aPSwU3OyUmMjSK1q4ntaLFxlZeqz2U62AcO8O45bPrzhak)6HC6YZ8pzp6WRjZ)iUx6)Fm)J45j2IZ)K5enIXr8QWenhTNySfz0HE1n9K4LHWgLMjFB0bpQbj)aQaSH1f2Npy2UtrU2qpAyoULN)zl(4VzXJUAXd(URFYF(UHFVblo)lE23(dbFlbKR4ZPVPv4nk5vl8o)UtRFxYRH7Tn73Ah(x0xLDY5v8n)E8KtYqoICeDPE8xF0TGrwRKRWJplIDpCHYN9w7YJW3j8s64tnDg653l8TWZI95ie)XmUWi3F6pbHk0vLXv63Sr948E7VZkxfANufkWM(MUpLNDhGg2RW)TjxdElYD3twt00Jn3pHb4M8k0PRc(jSgYJJU79wksxgYbNEDTvIfNuZJe(eEonmpFDyvYhgVvcH9v3reM(zZe1lTzRg7wPQOkHnBjR62UmkvyV9ifIZaiu9HdafQ6iaxYMRnXpKHafI3bMmBMGPwOkJG5vYHYurgfTBrAlWtL9rJd0xbh8XSzrHTTpO(Uv4mTFZwkvQM9bCW6UyikiLIEAgvyojJMXc6PRLPWaZB5CSb09J069D4Ccf3H3PtSBZgmsrWzcqKKKtHy2mPNab4NzehlLmVoE)7WIzPaRuQKV8gH9wV16VKabjgcYtRiQGI40cb5svEPKgrM4VqM3gBD8FE7whiKvYSQcz2riNP1FZ7jz0wPE91hYWw8emAROKnB3PO8fu3c5GsofDGtsu3gbTOYO)KmfkRoTIAqN1AKlpzuWZfLOfUW(0hwg3Gmk4PwPG7igsZHvkSlt8kfo5wHSM0WJd5cVP9lKmswmivTaP8eW)iLMvYnsYaux(azPVGfj7QNYU3kejBPAxYk2er6IWQUDGJUYod)O6kuxPQuUX)Rbe2j2VuWvzv2xKirJH)sCGw9uQyzaSMt4zzCosLkwmFzwvew1bmO683XkX4oZML47kS5HB1akbdbuMzaIpcqCFqHb(vcZnF7OS6RGzwyjt44vXteEdUpX(5BvGF5i4y7I8lhcugfC9sV6H9taaHxxb)TkP)2a9x(Ok7khVGajso81GOn2F5ctrI0d4DnHurt(LdKqy8FxAM4d(u1om)MugCFkQ)Vp]] )
-spec:RegisterPack( "血冰(黑科研)", 20250820, [[Hekili:fFvBpTTvu4Fl7lten10K0gkvQ0pmnnPXK6x8(wvT9123KyHJVr(LgLPkRqBdnbs5LogSrPcyfwPDRaTsJ2gsu)XSCDC(e)f25A3qmH4uXKMMekkCVN7ZZ55Co3Z9e(K8)apNcYcZFRujsLoXePsepzI0xpvkEoRsfW8CfqYtJYcFrhLh(0B7Y0zpCSUhVCNxSCNTwjgZIsAeKcdjtITHmyfpNKTQM13PZlDw4tmophY2khXGN7BXQLS155YPQOGdSeBkZZb4)nF)jnRt3Sr7gleqiDNx69xZFsZQjtF50JF5eN0SgyH3JpGw7(0Nu3T280DxJo3wDlVP3JEf9DVXDHxqREeCa312YDXL6o7tGJ4mLZuTBTHx5kN0CDVLFJ7B)G7817(SFZzk6(1PR(qy5aLrN7PG468YJCRv(2DF(cDF6RUdpNMQPLPFedNbzRzbF9wj79HfphwhjPHv4)AEoBtSqXCQAybzKPLQEwMrCizlvcizDvldIGeHWWZ3wsMmczLv8Ts2q1cBOI85HbHfYil2sq1uasbwqSK5dHiR)bYQvQqU4kQMyKjo(NmXr8lDeviwXZyaekKbFxSrClv5Pb3609K0iefHcAOS24ZS5yN)Sg48ivDthXB4iEvhX7DVHaXa2eRV4lGHaIgwx2xlxjsTizNjdqlg)JGRiKHKnUDbFpIb0DXcyDCEvmWWnDedfBZrkQXoGKge4zmC1iz4lImS0hov5scweB5CmOs)5GAyrXqk3FDbtld1P9f)4rI3yzni2fG8DEjSrGgt7l(GAH4AG3Q5iojKFUuYyq81rKya)Zah7gt27CsetZqjbdeuJiOGH7TGFCTO9J)TvoX6v8a)zzaQEyzTWPZbOXVWzOhmwqf3fb3WU4iboYY0j(FltzRlzGrtZywazKh6CcUZ1J2DgliiAyRJnJlBByG1TCe)khrB9CeTsdUXnbEt2lKg5fDMvJp8m(zTjwSHEfDYZCfLiPXCx27cGwsMyuvFbCDE1CXujKYVYP1K)3KXcLYW5lqkIn8DcHIyubyrMqtgPqVGT0sg9laJ6c7qBupWn2r7jbNuIOQ57gFMM3tRQ5735rY5u1X96FpSg7JsSr3apcw6dwqyOFd3Kr3b)I6vr37wMq0uif1JdJ5OdVSluuv3Y)2esPu)iW52T)dMPdtCyR8zo6U1qbNQSGFXxOB4WdWjgrij6wBr3oWr8AFUUbGjdw3eI0OBGnunaXKjsmIGcm8vbdSmjVe60PYgGCyFt)U5HODKZsnSKelTos3aCeiszY2o0iVfrg6q1dmRN7R3PBLh3P1(UR(O2hFuNMnOhUm9Gp0T86DwzVU7Ei9NMPZ6p0DLdCRpZFx((0JB4T)(UhSy73)Q2n)fALQDA8IUpOv3nk797ZqRxXD()eMAfMSv8soI3UDRpcW0P2lbyUdBg66vOl9hTp(42T(z33UT7g1cwHUXENIw73)AGXaQHJ4wDvya5EagSCY7adz)PVNIHR3h)v3TEhDM1PhoR7c7594LanqBSsGjEpVcDNh5U1IHHgeJZuUvxIo3M0dAsRSB7gZMcuL7CL9EqlA1182EpFByPscBUx2VJWSawMnNelYY)pp]] )
-spec:RegisterPack( "双光环(黑科研)", 20250820, [[Hekili:DA1xRTXrq8pl9LA5wqCs2soTKgO)bk2POcvM2cLC7TAV50T4t7EDV9IQcHfdT5HemjeiKhAmLg6dLgkPqFOV02VnvXrp1VcD29SoFs(ozOViFENz)nZoZV53U(D8p0Fyivd(d661TN31661UJxV(721FOEwk4pmLYoIog)qqNG)o)rNm)E3)Sh(BTw8Np(SF(XN9JpzBRtZsK0qlyzYCfdD0F4OCEIEFH)OvJGxF0PuG5pa)iMhgcfUazm)HTM)YFyXloz7YW8r38qZbMd(N)(0xF89(3)67lI68h8mmWN9l)XRU)XF1R(2FD(tp9wMdM)YtM)0VRENw8tpCXZEXT8hMWZ0z2eLkb8pdCvaktZLcBsq1XeQiKecm6m)HGGokbc9)aFnM)wxVyLHmfxdko1F4ByccL62rkzMMeb3guT1C2rCX4lWMZMr0YCwmUXzSeGOPQXaMlykGGVZvb(OePmKKMqhNdxg9I1jzAf)iO(iSBJrOHC3e8MnhANXwMaBcCBGSgeMG3EftvrWeCDtGwHz75oacychYmbVLjORjy7kNkitZtabsOWdqVgpaXanrh3oLPnb3We03BTSRmc3WfH7Extawv1ueADBCZk95vU2Nd)kzrrYpsYtWSqBzjr08e9s2J7h9kzwEgqMgJzoHrXta2OqNkXtW1kjIN0YeD(kJIiJzHoVQ0wGiEzxKWZitGsA4sSMWrYAKcG7aRXw3P(uBvQEjFP2s51FpSC5TK7SbWu5cBEMUjG21BzpCdavqHsvqMRPxbUr5rrTx1C7q5uHf0(BGzJEuIESujWAnzkxG2T7CV12zLdeP4BIvWavSWcftVwdQg2vNcfgsHAPvJb301AokqnTaCzoJKkNIJISCLcjPoS75QGVtdG1udTyDBOYCtEDRFSop1cEhVn3FQkIvgb3g7unTgTI51gKS8e7oAwoTOn7s5lkaifY7cOGjU6JZjYuGMkDmHo7uD4ixeltMzhpe3zw1SZ6zZYH)peCTa2S80g1qVKrfGjCwSfNcPQRsEUQTkBUjz0o9RwJkc9sAZkkiD2REYWvXuXo1EERtmzLYN44ltozeTuaTESDd8RoQ3KmHUay88Nznx5HgtPkbwQqz2V49)Sb7p4JFxtGj4WySYYrgKct3ijEB1w4K6wMaf815CLv(ptob9HMRLtW3UGlWIPIXiF0CWNWfOPEisFOuGX0zERZVm5lru0Yk))YBuW1B15B2UT91m77cTDB7uCfLuycCpmbnBlqsRWV7nu0mi8tXt8IF)0x)8JBT)NBVxkxJkzU5oTV))b]] )
-spec:RegisterPack( "血坦(黑科研)", 20251226, [[Hekili:nF1YUTTru0VLUPizrfePSCEGKUiiBQdG3WSEihsosCGP4qqo0QQiGWPUYrXnbWgXWoBkCmqAsBsBtbIDrSLB9htnfvwLFHodPLfjvggZ2n1gqIyECM7CU3Z9qbKa3fOycPiWIY1LBkjlpFnjzP6YYafApxeqXfASeSn7bhyh2NJ3BLOF4fx69d3m(LBg)STUmFf9Sjqtos(Kapd2Qak6byB6x5a0laFtj2QCrgGfNhOyHnnrPRb5BauUncsTc1UJdUTf96HA3YMqmd1Ul0zPqTViuJD43(oSJpQ)3F6Xpn6rBh)WbHlm6T)oBSr78hX)8rXp8WObVMpmF9X)YlgT9dI)T9I3yn(g6pi(TdJhUB4c38c(hd9N9UOtwLbq0jhC98qgQ9LSb2(1X70pE4(Jw)5PdS1Ur)6ttEC8F9KOhCu4cV)(Ne1)XPBD0bVA8(h(HJFu89py0(dJoARO3Cy0gFx8lF8Ov7hT2bx8GJr9EKwy7ecFzKNpM4KJO7c9CWoT9bkJgSr067g9MJJ6)JNE0Ano9DVA06RmE1)mAWoJ37N(7v(2WfakWaQfXdOe9KnJ2ypGIn2N6ZZRqcI91IjvlihOUnYeClGIHhMI8WqGYNfQzsO1A5r8PQTqSGPgfBSe7WzB2GYdmfSrpvkjWWcqzr5NckDEUx11g2oanlwPJR6t9WlH441qiEcIRqTpx8bLmj)SwgPwy)HA348PqoOoyKFMWc5tz5dhJKyAUjCgnxOnzXM8QDvOJPQjYa2JVJMcVf6bTAvZWkG81SOmWTuuMxikwiOn1QMRbLDnUzOwZ6fbAkJEfHOK)2ZQ05infOucvNGT5WC1lmm8aAUPWWIvpAM45Acbkn74f4G8Rze45HCOPbLusEmWXIy3t885iLqTRjlMtKQlUmlzPjhsk4LbJyHedaSHQlPlVsJdtJmPio6zHrSiAgyU6mzAJZsqsILoPzYcehdS6ft2uOBcuZvDOssbF0m45Z(XtGNpDU76nYZyOojJNSx1UiOlBqEGkwOveTRKbnwZrhvsl1Uyh2Qzar5KzlyGn982JtwBhmts2YdH(gu2tQ0wFfQeBKvuX6SOYNN1DIfDjdwSTNEwSO4oOeuMPoSTh2Ds7PlqCWvLfRbplFlMflIq2Cc2aPtc4SdXJIPbMOQ10klTSmSJl2JLWsQVkVTvsluDcxczHr2M1mjDDYWWtNPA9TsuPS3QHPln41w54k10Nv5wPPgQQPVif3sT0UAv2sTKMt)78uLYvqh4Juz41XVq5Cv6cnF2UqqhdEXCrPP42rvX9QQTIk0XUO5tjnmecxQ7s2P5Asw(svkrykvRzjhOy9W)j7UICyPUDI1sZ421OeyelLkL7kluNHUeRJQIJQSyjufCuLfBVxUn4Le4eEgJCV79jYUxwGVSSyj6)V8LLfl(RQVSRhYG0rho1zwSPaBT(8xAVGJq6TFYKLBDNGt(4OaAZeKL8BwQKv1K)b)Z]] )
-spec:RegisterPack( "邪双手(黑科研)", 20251226, [[Hekili:9M1xZnTrq8pl9LojdToXojgkdWd08aeMHPZy603KLS0zBnil5r6ezChgnjqj4aucjmnPfctifAce(BHbiKajp0VjT5KSFQFf6Q)4izBDN)dHMhYOt3E7U3U7T)(PZCj5ohxgjbmI7SPgo1yjtLkDIKJms6KP5YGRugXLPSG45fkapOkuc(pzUByFJPDFDffnbj3LBOzQlctXLjNPSc(0QC5IvNGKLrICNfEOOSKeYxoKHixMXrc4Iw8NrvUqr8rT4)E1IAkvS4tDkl(V2IV(L2WE63o(zCn(Sx3(zRr(Th5mBvRjSF9lj3Bn7LERZJ3Yz23tQ(e3x7UKujDwFbYD3I887q2zdNB(c7LNI8W1j3yXA7CBYv3YAcs17s2ER)9d3PzTtE4JDMEh7zbH22Iph4eKBpp5wRcQmyZynXX7Y)aJ8Whx7nxV(v(zNp(CyFn8qjp8qJnQf)a1F1Y1wDQHiZ8Y6lV8q(UWGWg6(Bs29Y(RcKpQZ8vWqpPDE6A2lEvNxTt9PUd8Y6Bpp8E4b7LUF9hSc5LBw)PFW56xAV3)N9IN6fWsoI91MQ2L)y0ah4SGMdE)cpfcrdEuRj(Umw8hYI)0NZI)VNzbl(tM5VwkvWZzYe8W4QJh80P0(H9NmuWOlA8V195jgW5xxXzXN4VLpeSXQT(AbsaXl41HRacoW49hS(E7SBJbZ9UARVqtIfUS2vJ7kHXd2lHlNQZqMBE3QXx)lq4izcqXV5DWy)ujz9DTNA6bC2E3A)0MdsUY2oR8AYLNdYmqKgKD)HoBFB77Tc5w30VGGuDg73mnP6vdggOMT(Dx1ynXiWsTF2diBUjSf8lX9ZrDTNZLrr2aB4DUvwTGccE6SEDbqQc5uqsCNKlJOUmgPllWL5lS4L0WjYPOPjLTSIqbtucSS45HLYLrqelRPc9c8EFwdSU85rCy4yFN0xEDndC28OlG0BxDYIvYI1mfl6QQrOQQ28lDujbzvdl(JzXpIf)x2xU(OmTxu)oEZ197SXOAPCM5ZNaAmQPi4UUesAtQgQe)nuOhNMTEc2)6idKQiYtxEoR3KgMLkPPMTGGEbTkkOyTuJL6ARdt1w(7BDtvKrcrtDDKk2I)eh3IpPN1m9AOh78H2ZqeqskenBCe6zdxedF95RNuS0Z3qvpdyXZY1V4fz67w8d6N5B1ByURso8NHWO38IAAkU5WenB0WA1tayqHUMVBlOkLvcjkuXZ3O3lO9q(bLnP3VWVemM9Bk6hissVNbv1Lm8mrKdErpINCygwKExdWwYIzlRnjspWsd3wWqutwXtn0Bj0MAoYWEECS1lW0dZOCz)PJnAC8yYw77G0710MdMMUwO3fbGhkJWjkuuZujH7QVaQ5AmDbzdeu5iibjhbPkH2iCgpBqVZb1D9NuaT1IdSqzp)GENNMIyhZnJgQJIA6Qz1YNDszvqAqry3GyEbtf8(41nKTKmCwkVoc9JOOwIjmCrKGcUyIYIyF4RXI4(iy)7opGCbEN3lzId7NMYIurLKB0zyKq9jkOOK1FqwxQh(eqY6)1ecADa0nS5slivEzF)(ZXIKzwUlDHCM6g44WJ7QvhWHYlbbaLIALYjGztPYZDBcpo0wb1xrHCz0B0vrnxP0I6ARmIrA0NSGMk0)UOmsrQvUaHZWoJDqDeg7xD0nSt7EoxDKyApYwKn70y8lM0s9MmUJtra7kdhpLvAuCmA0gbTIS2CZGXIkQjeNbpTKrlcLoQq5q6giD)iqtsD4MKYBJK3uVvdsVdmtSIwoiZM9w)txQp5N1B0ozqMQdmr6NYNwZj5AG32HwiT8Lg0Pg0sGRh4Dfd9fQSd(83AHfrR)FzhqNpv)APULyhQKx2WtOStIek7dZNSPZ2c6LQ4IFGlge7A(eodsw9k5gFu4oJB2cazyblBIc9jcBpJVq)eq)HV0xeJc)MLO4g7ZKJETF3PZUK0viedM1DuCGAZiiwywxwXbRrdbazI6DGA0Ivkd71YiKeqnvePG0fAKF7YV4OlWDzGdsXb)KAs(P26QdToO4TD4cG60LUmit8)oG8sXL6rsgDGtpRYO4Umg69Cy5Z9fHHoCfOumvBLXJ2pxybZntCZf9(SsZaJeZ8goOETRHgoMBSLg)bg3YXbIDIctY4QmoOiM5rfysbDvOdo8Pj2vVf5ARqEXhix5p2BRzgBVn3i4NHQ6s1w9r)ZuxYAcqtMyGrbi9Z2M8GNuFJ53BRvD)yCT8W3jXLXtPC)3]] )
-spec:RegisterPack( "邪双持(黑科研)", 20251226, [[Hekili:DJ1wVnXXx8pl9LkqT44lXHlQWdvivrOIhQ7)YB7617o2EfR31A3zjYi0kBsH4CbfUerQaxfsf3lfqa1YKeGpm1Z61p9)Rqp7m2X2R3ztCjLhAEW2zMZ(7CMZ1F7iKq4hfYOiHrcNlz8KPtKm5mXsKk10joQqgCLYiHmLLKVGub4h6sLGpjRUI7Il7VCfndjf)h3YW2ug2sitoBvn8z0fYfgMPsNcKTmsw4CZiKPOQIcIjjYswiZPrs4IozpRUAHI4t4K9)Px0qRIt2tFENS)asQSQEbNShXjB3R8m3Anp9z9TJvQ5UwtYIVUZI1DM19nVI8RpYD9MDE6wDw8DK6)U)Y(ps7w3UDR762Ok5bpMSYD8(WTjlSLZSK63JS9w))DUBaix)(Kh80o1(G7IGCBFiMkGL8(ZLpSt2CGnrU9nj3ytNS9pDawREfVQZdyDg5kh5NqQ6wozpVb(7p7qhe43FNTQcYz2tUp)dWLQ2Ux96DE)laNsIJpv8PsN0j7Hix7vDB0yQUVUH3MvNIDcom4eUFlYhNN9uG8mBp1uP(A43)X2T3AZop)rU3zHoV(dDREx26KNuZB(ATF3YKnxZ7gpP7cRqEXIST8U(T8wQr6PspjMmZeCBSfPEZt4mBIy9vnzHL7EVMU)YlB3ABVhvJDc(kMPZml3M19QUU7sv9M)9hkqCaoCjbOyhy2sD2(TUl9aMrMZoFEY7AcNkVpUa7y79(N7E9FB4JTZSPai6SXBiZVA3NVtN6xJS6nDBSr31F7UzhUvFy3QBqU1kURTnzhinz6y9t6ip(JUvRr2PQB1NbjwNQV10B9wT8E8p3p5AV8t9)tiJMQf2YVmsYabFDoAfjsxkNgsr4BfYiBQIrMQscz(cNSkg4y5nnSWI5rxezgdRkFbOYaEyzSQHUqgv5kIydB5IcyO6BVGkNMHHIyznPc2OXXITUOf2u9ciF8sXfpo2Lt2VKVIOB6RRlIer6OsQiOO5uNekRgYeqwyvnKUmv)ttDt92sXVHHOKUIOcswQYWggiA6Hf12cjcwAjRacnZWcLdzAHmzEGrK6OJif9GK32mOcp2Wsve6CAcT6qkIsYYinKPeBJrEKJZ1DAARRklw2yoKjZLmt8bGBzxQKHUybjZcgv0OoMeX5cfZGbarwXKTnnr6ygKj2n4mPbUGEJCgQAuRGFQRF5zmOrVHg1retXyoDQo4BEb1YG0We8ZRhZXDS4bZyK7BT8ZMHQJYiCScfnS1IXYqPgRSHHMVLhZusfsPa8uIzcFuzGogSdvhtZvhHQaQBIUQyEWvCPkuh1a0hElk(PNS4o4qItvelKZBxB6iRW2oyqblvMAhZW1o(NQj(zhJAhOs0OnviX5aIcWI(w0ivTsMLQiAKxexSxSz0cXehB)Lq9nJMpv0Wu3h15u1bPbGWqXjuFO9FN(4MOssuYmWrpvunm4y58Z)hZSdxvt4jlI6Hq6aXVfd)85D7beOn8i2)WtWmOF3FoYNaMozV8L71IiOC2LdByx)Ps)7RZHMDg5CTdwLoyuC0Japq1kVr7rp)BIhOZVKNJf(j1w)tTzl)gk7P)minUONAg6bCaBMWpHbOteMg533GjnfXXyNggs87CShmXc2GA4KZeJn4Di2q87RWvJjJao(TmIkZBSe8P5t8Ac49MioxysYVGpewGFwkpcyGrYa4GHGzs(9jMacM7)ANGeqtgrL)NtcOj53YiQS2q3B3cp4f8NjcoK(QDp4Bee6bV2J)U942yIS8Fb3qzK0FtQY43AzszPQGYlzRH3LMAFzlPc9YGOl6sOauK5NNvejPHlgRSmMrDl9W0cGyS)(aXaXbeH4NZWYuh92asnapzjnnr2)i6FTjSlprKDXK(xFsimo3xpBpw7uFd4YLnkLtchnjEAeKtSRx67ibVObA0Gua4glcgHhKLyzaJNTkQI0ucMvnyNOPNpbDp43DGF1XbvdqAeBojtDiaAjKXT(nilTb5L7qU6dBV11MUDRNXUnrs91928j)v1R4mlGKngCPczyxJRFe3iVQM)fy7dNWFd]] )
-spec:RegisterPack( "冰血(黑科研)", 20251226, [[Hekili:DJvxZnTvt4Fl9c6eM264pIdPmax0HPtRzgUrVxlPJLo2wtKL8OpiJ7WOXbAio8rbAOj0KWazAAcqFjKjabtsG8JPwY2x1)cDpNtcXw2hzNmbUOzYKiP9C29z39S7ZkjMq8)jkOICWIxoz8KPtKm5OXsKkf8ROGt5syrHsiLXr5HlmqfH)6FJnAUCfYJlRBIujB3201sbejkK1vt35hneZ2lDgpvcyTLWkIxEurHcAQQy2kX2kIcxeJCk4jFjdT8fCoRN83BzA74jN8h8K)gpzWQTwAPlEj)7E7GzUvWlw1)3FAJzQ6Lj4vB4)OvdMFRgpB7gZ8o)Q)f5XKTuV2S1RTqWsv8xzn)BpxZpmR)0B7LXV6I(7S9)S7cHu57wVXKVi4nt6jNTmyVzVV)9wgm)(43lZ5hWFalSYZA(MB1AQ7049RdosI0dNE0HJ7jpuRnxccDdZm8WTU2ZdMCRtdUWtQ5V31z7cwFWJQeuD9GL2gCryRF9boFWmGdSd52PxS1F8l(3yZ9V9rexj4MR04bB6LP1I)wWCtF2U2e4FbBUmCrJ5(qJ5N6O4pm8rau1ToRxMeX6eJnxBv)7EFiduF3h6pv12T7qjIh)ubl8A4sWptgJcdsy(HVSETDAU6Kn()RcOnyRQnRmFWnR086V3ltQyD6Im9dQ1FJjBU3BBT4haB5p1DA(63v)9714bp1lZiXoWVASZRHirRkl0CVPRV7tcE8S(vFBWCBmelUaOinSwwIWFT9cQmPFTAnx7NzNog6RsK(u13Df)1F1PpkriMN3y71GWt7HM2JfEYxGMu(Ox0UpsfYIn0lzaSZngst39Tnx7xhCqkkORz7ytlx1mYRJHRUmT4hBGYQJvf)orbflnhSLgsu4l8KvnDILJuekLdFfSvmhnLXHDkkGuC0mnef0ukl5y6Quq0bk07NQYQBAQkvshL3f3TUypxY2XsBCmrFP4QVW4YcxePzy7jFop50EYFjxK)rz9bkyBhnDSHcfhJqWXbICTXsamkA3o0GfLMlyZ6MlhZE6U2oXCl5jF1R6j7GSYJDaBxedHqjvnmf(PI3gmmP)3H0SSniKfBzJTyiUdmCMowf1dZ5Avo0QgR9vva6VBbnKXQsiffSo2cXe0Xw(2ODoxJSwy04eXsiRIMwXunNWOTywy5eDMioxLYsCwUgy7ykUwwydGf48EYXPPpxJcM6L5kM538KcpxtrQK5eyRUc34I0Nt3R0eyujwSpb)seQ3pUMUoKlKkIukOzGPj4Ww6caagPntX8WdpQNGFTd1g5SW4FIyKCM5bd0w(ZCcQXZQJSDOAIFvtpdReKLiI4kv(H2ZmRorDeIDIXgHFjkHlNPmMssYvj8lDgYtokqtkJIa1EYNMvVhgk89Nr5Ng61XQq(fBnTLvpZrxDj6gYNlAJmgxJ01rqGloIZG8RY7srJfHEsYVWUh1eu394wWhbi4x0ECnw0DxcNGCqLO4issXsabq(cMU6XiB(kyQjumn1j9pJzH0aYg4OGkqWHulFOjouc1g8l5d3UR98wbtldjZCstOzaRwK09qaz(FNHcgekFQqwSxcBGlQ1JUv9yyGtIg18761VwEr1pRlZm6Gm8YzgOXlgBGgV4Z8ScdeRflIHmuHAgfu5(WQ)jGNKFvWrGNK)r)(XMCmQmcNPZAQP3hkF(Oic2R(m38jYWv8z1pseBrqN)zLtjcg)p14G3iY8l6p5y5gWXkgawovCoKRUZhz6oyTf1Goe0o44qn14x)waJ0DkeRKId79js3EJuixqKtoaF47YXVmUxerPouFkiDDj2nsK3KN9(8sSVjhH5Uh0td0E3)RbqJnLSWkMfZICIEoaAXjSwBcVyOw473ozFHrh(O6PZCuiT1vcmIa4XNHHFxTtQdW0O7eildiyd8VbvVN)nFS)l31FQ)S(23yK61Eo7RF5xD(Ml)0)UY18YaAY1b8Frb23IKKDmZbZIikqvN4)c]] )
-spec:RegisterPackSelector( "blood", "鲜血(IV)", "|T135770:0|t 鲜血",
+spec:RegisterPack( "冰DK(黑科研)", 20260116, [[Hekili:TR16VnTvu8)w2xMAfAEnL2cdv4dtvtBfj(s20(MTVX5MgR6yB5hnktiR21rFIgpAhv8yRWyWkmbuXJrH2X(FzR2U5t8VWo37nUXjX2Xoni0MwqcL675(7CU3Z587CowHph)xYNViYcZFUHhA4XgkxUX4Yn6XH)XN3QMoMpVosAA0uWxurvG)3DHTN4SduF3R4)RxX)2RpirGAkAOIeGm1SnKaH4ZxWwwX6lu5l0o6Gq6yj(ZbFPSCXIyMiytj(8NoLFCMCcmYQSJ4zvLNQS1PCe)mdntlhXVsvEgSHjsXr8JCeblT(TU1eN19cB59I58E(BQp7n8xFl)LxYzsVNTT7pEFVn(D)h8A)LFL7s)g5XIGrokDVEx)1hm)F4(lp4GxS6h79O77E9T8U7SEVyv)NTR)UBcaCZN7DTT924EE3AZtr3iC6gkNZKDZ4d(aqq1ryypLZKGULnfkAJueQkJvk6i(xlCv4SCPl6DX5cBibIAvvtOmsTioSOlVAhIAHuWQwCwLnG7obTscwLrMMidzKkhwfvqPjaBn3bZp3(VAv37S(bxER6lEr3hVm7Q4T7Tudl5274(NZ)29wom2QyJzWMeSL0ukkyAHXkTJ9cB7UWlRF1FU(Aen4FVFYF3lDiQ7VZA(p9nTHAzTQkYQtjuqbzA1oClEZ6397Dx4PUlUlZcP7CkLA6L5kkBIrM422I)1EJ)gxO(n)bVRTiO49372EBUM7sVe8MSLcupdK0Q9db8GfFO7kBT)oRWc)8N)rby2TiIGpqKX6pbUn8VX3XIBHWICCbXamyDehOrm)eF9GSO9O8AW(DMCyUGGI237WFoBVEV6X(Z9iQWDZ4c(WNxr20YKM0d3pky4BNJsM04oI)t5ZlziBHHim(8FGJyrnlUse9kucdzPCwYstd7KppsYswtLpVSunblnBPY8waDr3GQGIMwrbDf0u24oXI9Cie0qEAmbVJhlEXeS8HoIqcIqJNBsFWaDEkmWvqYQWYJ7ioIJ45pFewxBYmyawmHmSvXMCs2ggq0UJ4zoTJyUgary5yRF4Zhm0zeBAjdPis0d4iboaRMsGmQuJLQJfaWkg(ga2YOjDhh)1sxUcIqIKD1J17MrsxZrjs3JtorSgthrdfSlvIBAzfk)qfKuzzvmNToDnWPjljORvfBWCDJmutLYUAAQZtMrDwYaJ)gIslPnvGctISSPMBzzIQ)K0R6qhjbnWRwsrRA8NPCd1ti3ioFOeUTYfpltyKBcGTjwaKOIjD3XtSe9UlanuGnOrnKThppsmBNg(vY2OgD7JKQT30vBRwaQxpnrEbiBwZGROwv1qNT2xNQL4tS7qlSB3O5GGLTvlRPulY1BAeAfui4tAZJO94ZN7q7DWWnCSOMHeZbs(yrOwt4Cfqq3j7BS2wwsGtGZNz6Xt6fuCjsY3Z4iowlLhyAkuEtVLRhqFf8CObp0mizfcmoIWsjKQo8rHe4KjbC64aOa3w70FykBfoktASKmP4jwgiWJYCjwi9w9PLXifRYC6swm34qbHGrgSmE4GfjnOtBGrGJfTcZbaf6Lq1G4cuXArepakNATXZJfxJjhlMSQJfx20G0kXhVPfGRWQEqKtOkgPdpKylXtkc5c6ylUPkRzRWrGzgm9KF4X2abUAAVnStCtL1CfQoINsSfV84K4U0eQxwZqLe6uvwfWHNumfMITeYwX6WoHdKTIm4wOfTXT1bwcfJcftqUfhnCfjWjqwNujxxJ(We7WLDXjGvXvKdiZc5wKqkkcS)qG0upR1Eb24(iTd7UmAWlyBacdxdG)GfohtHlB9uQskIr1FAQ2DJPrOoeDdSKwLcOMUKyocGbdYAs6LUTcSnAFSXIj7ZO40AGrBO1rutcET(vSVfZj()JN9EF8SECiN(5SwhHr(6)ZALHgfJIcB43joQtWN55OZs7F9RzgZqZC97zg7Xr7sZqJzOTUKF7GPBkGUey05jpDdp24wVzDXMq26SOPByYeGRTHtZ00LrIxRtRMH5ipctRMbAGunoABTcZNXPhFhmrCgiiYWeXzHc492uNhPra7XPoZals2M6mdP)rAZDQYXBLLpTZO1Nu3)1hiJnjX)w78nfVnZmq4pqdoAQ5PydfljDbK48AT2L0HdAMUQcXvKkDS9XvskD84HIkQPdAxhJlcdmkHviSNnogzGuU3lULfo6(vRHzP)S(EVH9g3BA6nmdKVVdkHNU00SwcpB5VDRD2(7l1oDP5VNBVilnp2rsusVo3S0Xy)S4lTUf5hXcrMq)OzQImuHmnGAZBPl7UYMUpzp3lCV9F9cJU)op0BLzj)AvwAJdUZw)9SFRZKGwSTGkI85Dx7kUx(oKxfMwjyix(8unW)p)]] )
+spec:RegisterPack( "血DK(黑科研)", 202601156, [[Hekili:TVv3UTTrw4NL9MMyuSATSSD6g4Ml6MBwvGIfqDVLuuuJSicfPajv8QffeYnX2Y)fBVojEBSBs82yx3SoPgn1Pk(NK3LTIKsxLxHD4mIIuKA4FskyxG6lmK4mZ58DoZz(oZCgkQKuFjvM8mkaQVyIXNy6XtMC6ejNk10jtsLrPAzavMYmS3Izw4heykb)FR9RDZp)QTpFlJVFlJNE)Xm7qvErM8McswSIelStuzYvHJx5plqLZL0NAAQmmvukkkrLrB7T02CFQmf5YNhG7kqMLkZNgY)utFtaJsr1SFUa3SfvUUA2pJxumVA2)Qa3TbsYm8Qz)9QzB)t7HaT2chPF686)8BBx7rg3)iJLRRMw)vNO9ThQVZRn(HZmw(nA1)3MpoleStHgR(3CwR7CP2Z(HwNU6Fq)fhQ9nhP)D10pDvJxDUX5pbkGD)z9hEI(ohOV3tUoAGqRC8KQPdc8w)bfbshof71vtd1TcdpqqjXTzkvMtIJLoNPXLaiWKJhanY)ZI)d1SAB2aABTp(IMVzv4hWa99xuhAuAlSQ(tBO9U78(lw2P8YZiWYjmlTufba9CaMYIcUeAR6pwBLJmo(q9hUe2M7kxJ6lQTXwUKyraJKcTSIe3TaUX37UtR7UH(YBRT05yHGg4S8vlxmrEozaJS7Hy8W3ASZcT39bqTd1yZlEQ(t2wR(VaDZ4MqApi3Q1FQP1w)bnVC7wN(l6lVk0XQT4jT((dTS0tpPzJv0U356pAhiiTE6(10)PgwwWsR2E3xBBo2DtR(IW4jlup)PMTKg)fKxYQfKFuBzRV3XJ(VES(dQ3Jy)BPutBC3xRT59m2Bv97SG2IN2A)d02ynOn)R1MhRb4hWWd(Hoqlc(cJ3(Si6lWUFFCmPN0y3xQ)0LAE(bnBadrEe2yE)fRb)AZg1AD5lHQP9x)CZLCDCst5yiRahcwU(oKGSnR)Gg1BELXrVcTC0mut)fFNwJgMoYdUe6irpdRpSb0SX6q106Dl18S7PT(()PBAcJlxu7KlBV0g4H1roN38S9XtMWbO)ThygvJJhmBhduClTU8ySbOTX)uV(MohAuSe97)J6RnVXJUlM2cApjtGapKldT(wn7vrmEFjJWTgtn9ewT26TW1BNz16n)lzgl8QLkdpNSImInhstWdGF6lqzj6SmL6ZOYWkXPaK4yOY87uZMxujrbjrzf6caiTBcfo2BbhjKNNvHtuGkdhBvAfXkSfPuG5bcsuiAo6Y8mZwb4vw4N3HSXuEPikpcKmFKA2ImY0DEUm6bUnbjqjgobyBZOMnv3E0dY82LRQMf3dtMv5eSvKKGSJQzVXNQMnPA2V6RGsXmFfU9UpFmhghqwHdsPYISSj9Ztr248ZwMSV9W)jSPIpmi6WMS)Dj4z7PjcMaYwcvh0TdFEzX5as0Iq7UaV4C2QcLo0wrxZkSxXUlmsLQslwGwPiGgotM3jsGd5tiIn)1moOGvKJ3uk)XbWcHjI5vkMOmlmQBgy01uJ7wl2gyYX9BEnyDXkkYNxCoH(UFcjO3PQTURidOHcVKmsX(sMeSIZvPqH(Q0kLT1yo42)asOGjtv6lPZWsLOi5cvKQIujzEPqPshHmyMIPDox6fkiDsMXiyfMRIeKqyooH8oJn7DMJmvqWYVpgKp6LKfg46)(Vxu)NdXTtK62gvofocoxletYJueH7JderMeAqHJ3Cx(4yiZIneCm(He3oKjitZzZGHKhJqEiRoltvm7fst4SK9pFoS5kcff5RgWuKlPJafzkWqak)m)(PmYKFE2heXqUjC7HZ1jD1eK558r60ZXa3PJZm9UKAGmzedEIsy6e(U3MbrtEcdhaIlIZjw76K8(Wq75K0(bVbKdUNTF6X9my0BFWWThN9aqc6jeDydwpo5bJQCKJx3o3uKjudpy7lB6qe0UDYPcZEo)FaC7XztM7o(PMSaDmr8K9Gy3hRif58bE4lNWhXeycGOSvZuJt8CEPiNcWJy(ephNY6qBPitVh0Mz8OLjjRfY8XK2DnYBtZCBgoEZrPMf2ez5tM3KuTn(yc7r6JjfbogUGj2qaucFUyPE3PFkY0IDdDXisHPCVbVopf8nWEIXiVoEgNljcA3xEwQcvUjANKmPyFNb8oZptVrPe8kt6lpwzGsIzlkwHpHPyUnaPLUMKedCLoQUfUpEUDliDqMZXnIVwOcYkkkjyw2e4z8GYbQcfZaVcmv4vOSQTOvFlbphiDbja4VdCIbf)QBypv9a6gNYXKeagAA2U5IVYIOhQ4xnddMCXDnwM0n3IviXquhoJm4yb5eRy6LeLu4uQKhrJniNm3J2C4a7DyMAkaMUCIM0Rf5a85tyg2H0qhm4Snljypvz3OPACt1z1nwgEEA8xOnluTtaGJ6PbcGsCw5ysHRNnn(YlzerEl38CHr4HQQnkCLaOGWKt1JEfldbLzOVNY7rw1ogENcXJw5uwcWkwkhJ9ANyoTJMUGst2SEZO5kB0G50TA0)LFHYX4NYWmPovg51Ni50lHIlP5HTXNvId1iwFpl5qHAwbha)B3hZh9B3htSGbrh2aDFmr8AsiVj2GPrKIYv4mQVpgprT9l)t3ID4xyW02N6I4u00w7IDyhw7Zfbf)Zy62B2tfj95gGIyTn95IDcoyks3wwGBzm2vZ2DudAtLKpVsqvEpGSDrai3WchHVmXEQaQvbDd(QJgb(VOukyFUzPOcaY(TGRyCx)fzwYrI6iZvgE1rmQyevW3UGNmfDCa)OTqQDVHdYSUXb0FykmzxWh45oiUAE4SA1N70ke1Zn41fo0u8j(JbX(qFLIhhNVBInil6dhU9mne)8hHzAyuTM3J7NCwMi5(hv41JBpWnRpqU9rnRLh3p50CrY9pQXTNPbYz4I)w0TaDmrCaxde50Br6AGcmrt4oSOAGxduil6Daxde5KfEKsSUGgYS39voEDdZ0BbRXbADQyT)xfwiLEiUedFUSSHvLYc9vLnqxIrNQ6()R1JlcBNK0gbjhpgFEj3b)9CG)4VnGWyCUZxmKYwhK30wHKJAhE(ZWuGSy)Y9sorvueP9n15tXPIIaD96ahMx)Uqiu0Kx3x43iKbjmVlVbChi()gf0lt2m9MKLaTCWV9WXUenHzPGNcYmqVBEdde5EX5i8LpokN9D0(shhLZg7tvJKIqf29P(nbHwpRSi(YZGsydbISzto)XOohJKau6YuzA9Id12Y8NJM2pEH2chCf8TUEfT670A)JAVxTwhoFZg1AE2UTw65ARCuZ39s97)MFT2xRM244JtoER9xdo2Mnw3(NT12R38Y90xBPMN)SRuSQmYOUcAeQPDRn8MjcP2UwevME9n1w5jyn18SfNQzJNRVsnZFzRi1H6L5vllwGJh9Z3vUmG1m)NPBJ6)c]] )
+spec:RegisterPack( "双持邪(哑吡)", 202601156, [[Hekili:TV1wVTnYv4FlglGGm8cvYyBvxaj9qFQnp4xuFMuJOgjreksbsk7vleeC3UPWzRBB6fKTT7ceKhk2IfO7fGI2Iah0Fm1so5P8xONHJ4THZWHIuojl6cdyzp8mN5CoZ5Y3zgknvTFMw3biFS2P3t5EnvuvB2q94718ivTU(ZNI16ofz8a0i4pSrtGFV63E16R(5V6J(Y6R(d)Uvp(z7tOyULdAaHtEoZCnaQ062FMPL)p1wRpd7pUjq1uSH2PWFm2CWamLgSNHw3x(F(Z38V)Y1FYfV8x8IBU(pT6HxE7Z)Ix9WF9TV4Rw90NFZZ)n)e8dmTmx)TpA1vp52hD5Ql)N38Ip))EXhT8(rY1RV(YB)JF76N8nRF0V62p73V6V)4ZnS678bnmCM86RF0QV6Qvp5Jx)z)dGIL3N(56p)c433(x(4nS)Ilw)PFr0I86RV6LF9)A1LFtsEQ11Y0Z3JOZwMdXWNNgykrg(Mo2ADnnW9DMzpqFOJRVP)SbGrbBJ6BHhO9J18bZbH64r6A4A6JDnrAD3BzVPy)gilZZWXm0fz6H1hGb7mm7dfoBotfMK)yDyF0xJ8d8)drZS8ZiZtmjYRlg)HBLW2F2WHnMzp2XAU(uxSh22a3y20L9QTShL1n8MnzIJT(iK7iN5w4g(MtW6EMaHl71AzVdvIfcggLVYgU69TCCgKzXHN6JSW2(nmNm115m8aDwXCdxlQS2jTSMEzjI6rcf1a5CSJRTUZq9ZnTHHBmW5C7yUL(HeUDC(CRVJnizJnXwdyyvINq4tZk5R9dzMDivgillD6)OtcgsY3XyKL)4gtn8d2GpsHgVOtZHeeXaC(ebC2DMTigtg(mSo2gpXe7TSx7L9utXBpIl(P)OQZ5oSCg5ei0QkHbo(X8fnZ3rh57d5kth6a0a(hqQN(O4aU7uF58Cpfhhxg3tXXLBe1jipyaYKgn2zMLxwrmTNMKONc7VloUPi(7ntMtCQd9tM9uIVaB6ZzapG1zIhVKN5XV8tWnWXp0NWcnAgjHKXdmThf4wuFzVnUbGNn2JMScCfNG(aiWdcomCCSi2Qg0Iaiid)aSbAEdx8eKPn4NVFcHlyb098DnFGK0zBeSHUoq8Xq8zG7cJCrF0UqSmnMdtEMX483BZtEKze3K7Fk2Z30kiAkvAFswMJazkKCkR2f6w8kMFIAyrhznF64nAHpAACTRflw2lzcxiZvtLqPnPOAmZ1fIlPIPAOYKJ8IgmNYE56uGnsjLUfjQ8QIKYvAIZzHBg(qDxicDaK3frXhqtXNgmtKaWRmskRwqMdaDPJfkylMOfuDI9jrQczfpKsZqZrJbN4ONSS3j3jUbuofh4Xw)krMqE7NhKoCl54Pspe7aaAy8QJNm15CirnHi9ZXOPWGHv629XAv1QfWh50f4q24ywBCFhtRaLlvU7XqRoUqBjqzvKHb2c7I4KNwnvQCgGIS0koPEDA5CNrJa4LHkIxGAbwftd9GDJ4nlcsefAanXNSUG5gzsyrWUjoop2RkN97vTvqrPcBDuknc36exwk36ozlzX4uTdQAvGQYCIq2Q5VfcIC6YyQ9mGw4hLeeGAXl5Mkf6jYTPfrclTMKc2GQ4sRI3nI1IC3oLlBY4qqPOamYK(VT)W0tvo)ZO7zqYPkU(Be7zG)hhuxyby7OoVElufxuxuUt5R7Mc7fI28Zb5h0O5BIoaOflextLKYoFp4d3LPvkvZcX6axmdHQGWmjhUdtqV1TvujmK7mOIL1RLfy57KDy82QNHIHKtmw86cu(Tgo((vhrEKng5ozojxQ)y6rA0GxBCCik0dIS1khyCge0SCKl0z(D0KP4hn(AhLXQSrojLija6lD3qIZkKtQLA58mIw0ukRLBnkNjJPdlzfe((oGkUPLPdOClxDx1bure8IG0OQnavC5qoDfP)N8BD47i9)iUw6)F0)J4(j2H9)KBhnIXr8UqhnNEpXylYPc9MB6j1dJGnkns(UOcECbs(oubydvewNpO3oiw2J8WKV0cNJCTH62qVDRV8XR(KNU6RVE1d)R388F5XrVYcRU8tF5Z(BbVocAKReeCc06sFnjixdOZqtROBDYRr09cEq7Fq6RQ79nh2Ep(xgyT9k41aU8(8wN0ULK1r0f)XF(X3ugzUsUMp(SiXD1fT(S3Sxrw89IUip(ut7ZE59JEkmwI3WHKdZycJn)zFRgQrNvoVLaToujjV397SYfHoPfHsSPVT7tfz3bOH9vg49j3SEBYRdazoXDy26OukGB6BTNol4tyoKHJV1(2QsNgYbNDEDut4N0WJ4(eDwomJh6wLEWKLBiSV(EIW9VyHO6TTAF4(1QlkBzR2YYaUpJqfv)pwG40KcvE4aIHkocWUS9stYdIiqG4DOklwiOZgQWiONMcim1KrrN2Ksh8ezF00a5vWHJSyrSBBNMk7xJZjc0QTAT65FiiSMlgIccPON4rnMt7OvcNE6CzsmW8uohTaD)iRCFaNtX4aENGX(ToKzveCUbKvsYjvSyH0tPaSZmlhlLmpozn(OKzza0uPGVI6H9EVx4BBGGadbXP1eLqrCyHGyPAVvcJiNkqPuVTw74pEN2nfYkzAvPu7y0108Vf90o6OQOeEqe7Wt5OJQA(SDVYYxqClLbkDN2bgjrvBeuIkN6tYeO8Q0kQaDEZr(6jJcEMOuLWfwN(KQygKrbpXkdChXqAoPwPnzINPWU7kL2KfECex4DIaLAnsNmitUaP8eW)iLMnRB8kdqD5dKL(awKSBgLDVvis2kvUKDzt5PlcR6Ubo6g9m6fVRuvLQt5g)3yqyN4OkbxLvyFtIenb(lXoAkzeXQayTGWZY5SMQKVyXISQjmRdOqk83XQq7olwK6DpS1j7uhkbnbuLEas2cqsBqPb(vb1Ty7OSYRGEwyjty7vjde(ECFITZ3Pa)kGZXUf5xbwqzuW1k9Uh2pbae(Uk4Vnb93fO)kgv5N54neirYHVg4TX(9vmdjspG3qcPln57BiHW4VVnKRwr7)b]] )
+
+
+
+-- 简化专精选择器：只保留 血DK、冰DK、邪DK by 哑吡 20260103
+spec:RegisterPackSelector( "blood", "血DK(黑科研)", "|T135770:0|t 血DK",
     "如果你在|T135770:0|t鲜血天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
     function( tab1, tab2, tab3 )
-        return tab1 > max( tab2, tab3 ) and talent.abominations_might.rank == 0
+        return tab1 > max( tab2, tab3 )
     end )
 
-spec:RegisterPackSelector( "blood_frost", "血冰(黑科研)", "|T135773:0|t 血冰",
+spec:RegisterPackSelector( "frost", "冰DK(黑科研)", "|T135773:0|t 冰DK",
     "如果你在|T135773:0|t冰霜天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
     function( tab1, tab2, tab3 )
-        return tab2 > max( tab1, tab3 ) and tab1 > tab3
+        return tab2 > max( tab1, tab3 )
     end )
 
-spec:RegisterPackSelector( "unholy_frost", "邪冰(黑科研)", "|T135773:0|t 邪冰",
-    "如果你在|T135773:0|t冰霜天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
-    function( tab1, tab2, tab3 )
-        return tab2 > max( tab1, tab3 ) and tab3 > tab1
-    end )
-
-spec:RegisterPackSelector( "unholy", "双持邪(新手盒子)", "|T135775:0|t 邪恶",
+spec:RegisterPackSelector( "unholy", "邪DK(黑科研)", "|T135775:0|t 邪DK",
     "如果你在|T135775:0|t邪恶天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
     function( tab1, tab2, tab3 )
         return tab3 > max( tab1, tab2 )
     end )
-
-spec:RegisterPackSelector( "dual_auras", "双光环(黑科研)", "|T135775:0|t 双光环",
-    "如果你在|T135775:0|t邪恶天赋中投入的点数多于其他天赋，将会为你自动选择该优先级。",
-    function( tab1, tab2, tab3 )
-        return tab1 > max( tab2, tab3 ) and talent.improved_icy_talons.rank == 1 and talent.abominations_might.rank > 0
-    end )    
 
 -- 增加shouldPestilence函数，判断传染逻辑。by 风雪20250410
 -- 泰坦重铸版修复：使用内部冷却和实时检查，避免重复推荐传染
@@ -2451,9 +3200,8 @@ spec:RegisterStateExpr("pestilence_ready", function()
 end)
 
 spec:RegisterStateExpr("shouldPestilence", function()
-    -- 泰坦重铸版修复：检查内部冷却
-    local now = GetTime()
-    if now - lastPestilenceTime < PESTILENCE_INTERNAL_CD then
+    -- 检查目标是否有疾病（必须有疾病才能传染）
+    if not ( dot.frost_fever.ticking and dot.blood_plague.ticking ) then
         return false
     end
     
@@ -2462,12 +3210,22 @@ spec:RegisterStateExpr("shouldPestilence", function()
         return false
     end
     
-    -- 检查目标是否有疾病（必须有疾病才能传染）
-    if not ( dot.frost_fever.ticking and dot.blood_plague.ticking ) then
+    -- 泰坦重铸版修复：检查内部冷却（缩短到1.5秒，更积极传染）
+    local now = GetTime()
+    if now - lastPestilenceTime < 1.5 then
         return false
     end
     
-    -- 单目标不需要传染
+    -- 疾病雕文检查：有雕文时可以刷新主目标疾病（即使单目标）by 哑吡 20260101
+    if glyph.disease.enabled then
+        -- 有疾病雕文：检查主目标疾病是否需要刷新（剩余时间<6秒）
+        local needRefresh = dot.frost_fever.remains < 6 or dot.blood_plague.remains < 6
+        if needRefresh then
+            return true
+        end
+    end
+    
+    -- 单目标且没有疾病雕文时不需要传染
     local enemies = active_enemies or 1
     if enemies <= 1 then
         return false
@@ -2476,44 +3234,50 @@ spec:RegisterStateExpr("shouldPestilence", function()
     -- 使用实时检查：计算缺少疾病的敌人数量
     local missingCount = countEnemiesMissingDisease()
     
-    -- 如果没有敌人缺少疾病，不需要传染
-    if missingCount == 0 then
-        return false
+    -- 如果有敌人缺少疾病，需要传染
+    if missingCount > 0 then
+        return true
     end
     
-    return true
+    -- 备用逻辑：如果 NamePlate 检测失败，但有多个敌人且最近没传染过
+    -- 每8秒允许一次传染刷新（确保疾病不会掉）
+    if enemies >= 2 and (now - lastPestilenceTime) > 8 then
+        return true
+    end
+    
+    return false
 end)
 
 -- 判断传染逻辑结束。
 
 -- 新增death_runes函数，对可用死亡符文计数，不是通用的death_runes.current等函数。by 风雪20250411
+-- 修复：使用状态预测系统中的buff来计算死亡符文，而不是直接调用游戏API by 哑吡 20251228
+-- 这样可以确保在APL模拟执行技能后，死亡符文数量能正确更新
 
 spec:RegisterStateExpr("death_runes", function()
     local count = 0
+    -- 使用状态预测系统中的buff来计算死亡符文
     for i = 1, 6 do
-        if GetRuneType(i) == 4 and select(3, GetRuneCooldown(i)) then
+        if buff[ "death_rune_" .. i ].up then
             count = count + 1
         end
     end
     return count
 end)
 
--- 血沸和心脏打击的符文条件检查（鲜血符文优先，死亡符文>2时可替代）by 哑吡 20251225
+-- 血沸和心脏打击的符文条件检查 - 灵活版 by 哑吡 20250102
 spec:RegisterStateExpr("can_use_blood_ability", function()
     -- 有鲜血符文可用
     if blood_runes.current > 0 then return true end
-    -- 死亡符文>2时可以替代
-    if death_runes > 2 then return true end
+    -- 有死亡符文时可以替代
+    if death_runes > 0 then return true end
     return false
 end)
 
--- 血沸的使用条件（包含疾病敌人数量检查）by 哑吡 20251225
+-- 血沸的使用条件 - 灵活版 by 哑吡 20250102
 spec:RegisterStateExpr("should_blood_boil", function()
-    -- 检查符文条件
-    if blood_runes.current == 0 and death_runes <= 2 then return false end
-    -- 检查10码内有疾病的敌人数量
-    local diseaseCount = countEnemiesWithDisease()
-    if diseaseCount < 2 then return false end
+    -- 检查符文条件：有鲜血或死亡符文就行
+    if blood_runes.current == 0 and death_runes == 0 then return false end
     return true
 end)
 
@@ -2521,9 +3285,56 @@ end)
 -- ==================== 泰坦重铸版APL支持 ====================
 -- 新增状态表达式支持APL条件判断 by 泰坦优化版
 
--- 检查宠物是否存活
+-- 检测是否双持武器
+spec:RegisterStateExpr("is_dual_wield", function()
+    -- 检查副手是否有武器
+    return off_hand.size > 0
+end)
+
+-- 检测是否双手武器
+spec:RegisterStateExpr("is_two_handed", function()
+    return main_hand.two_handed
+end)
+
+-- 检查宠物是否存活 - 使用直接API检测，避免NPC ID不匹配问题 by 哑吡 20250107
 spec:RegisterStateExpr("pet_active", function()
-    return pet.ghoul.active or pet.gargoyle.active
+    return UnitExists("pet") and not UnitIsDead("pet")
+end)
+
+-- 检测是否装备了疾病雕文 (Glyph of Disease, spellID: 63334) by 哑吡 20250107
+spec:RegisterStateExpr("has_disease_glyph", function()
+    return glyph.disease.enabled
+end)
+
+-- 检测是否可以召唤亡者（宠物不存在时可以召唤）by 哑吡 20250107
+-- 使用 UnitExists("pet") 直接检测，避免NPC ID不匹配问题
+spec:RegisterStateExpr("can_raise_dead", function()
+    return not UnitExists("pet") or UnitIsDead("pet")
+end)
+
+-- 宠物身上的食尸鬼狂乱buff剩余时间
+spec:RegisterStateExpr("pet_ghoul_frenzy_remains", function()
+    -- 检查宠物是否存在
+    if not UnitExists("pet") or UnitIsDead("pet") then
+        return 0
+    end
+    
+    -- 在宠物身上搜索食尸鬼狂乱buff
+    for i = 1, 40 do
+        local buffName, _, _, _, buffDuration, buffExpires, buffCaster, _, _, spellId = UnitBuff("pet", i)
+        if not buffName then break end
+        -- 检查是否是食尸鬼狂乱 (Ghoul Frenzy) - spell ID 63560
+        if spellId == 63560 or buffName == "Ghoul Frenzy" or buffName == "食尸鬼狂乱" then
+            if buffExpires and buffExpires > 0 then
+                return max(0, buffExpires - GetTime())
+            else
+                -- 如果expires为0但有buff，返回默认30秒
+                return 30
+            end
+        end
+    end
+    
+    return 0
 end)
 
 -- 符文总数
@@ -2554,20 +3365,228 @@ spec:RegisterStateExpr("pet_health_pct", function()
 end)
 
 
-spec:RegisterPackSelector( "blood_pvp", "鲜血PVP(黑科研)", "|T135770:0|t 鲜血PVP",
-    "PVP专用鲜血天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
+-- ==================== 智能符文优化系统 ====================
+-- 最大化DPS输出的符文管理策略 by 智能优化版 20251227
 
-spec:RegisterPackSelector( "frost_pvp", "冰霜PVP(黑科研)", "|T135773:0|t 冰霜PVP",
-    "PVP专用冰霜天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
+-- 获取指定符文类型的冷却剩余时间（返回最短的那个）
+spec:RegisterStateExpr("blood_rune_cd", function()
+    local cd1 = blood_runes.expiry[1] - state.query_time
+    local cd2 = blood_runes.expiry[2] - state.query_time
+    return max(0, min(cd1, cd2))
+end)
 
-spec:RegisterPackSelector( "unholy_pvp", "邪恶PVP(黑科研)", "|T135775:0|t 邪恶PVP",
-    "PVP专用邪恶天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
+spec:RegisterStateExpr("frost_rune_cd", function()
+    local cd1 = frost_runes.expiry[1] - state.query_time
+    local cd2 = frost_runes.expiry[2] - state.query_time
+    return max(0, min(cd1, cd2))
+end)
+
+spec:RegisterStateExpr("unholy_rune_cd", function()
+    local cd1 = unholy_runes.expiry[1] - state.query_time
+    local cd2 = unholy_runes.expiry[2] - state.query_time
+    return max(0, min(cd1, cd2))
+end)
+
+-- 获取所有符文中最快刷新的时间
+spec:RegisterStateExpr("next_rune_in", function()
+    local times = {}
+    for i = 1, 2 do
+        if blood_runes.expiry[i] > state.query_time then
+            table.insert(times, blood_runes.expiry[i] - state.query_time)
+        end
+        if frost_runes.expiry[i] > state.query_time then
+            table.insert(times, frost_runes.expiry[i] - state.query_time)
+        end
+        if unholy_runes.expiry[i] > state.query_time then
+            table.insert(times, unholy_runes.expiry[i] - state.query_time)
+        end
+    end
+    if #times == 0 then return 0 end
+    table.sort(times)
+    return times[1]
+end)
+
+-- 符文即将浪费检测：如果符文快刷新但已有可用符文，应该先消耗
+spec:RegisterStateExpr("blood_rune_wasting", function()
+    -- 如果已有2个鲜血符文可用，且有符文即将刷新，就是浪费
+    if blood_runes.current >= 2 then return true end
+    -- 如果有1个可用，且另一个在1.5秒内刷新
+    if blood_runes.current >= 1 then
+        local cd = blood_rune_cd
+        if cd > 0 and cd < 1.5 then return true end
+    end
+    return false
+end)
+
+spec:RegisterStateExpr("frost_rune_wasting", function()
+    if frost_runes.current >= 2 then return true end
+    if frost_runes.current >= 1 then
+        local cd = frost_rune_cd
+        if cd > 0 and cd < 1.5 then return true end
+    end
+    return false
+end)
+
+spec:RegisterStateExpr("unholy_rune_wasting", function()
+    if unholy_runes.current >= 2 then return true end
+    if unholy_runes.current >= 1 then
+        local cd = unholy_rune_cd
+        if cd > 0 and cd < 1.5 then return true end
+    end
+    return false
+end)
+
+-- 任意符文即将浪费
+spec:RegisterStateExpr("any_rune_wasting", function()
+    return blood_rune_wasting or frost_rune_wasting or unholy_rune_wasting
+end)
+
+-- 符能即将溢出检测（超过100时应该消耗）
+spec:RegisterStateExpr("runic_power_overflow", function()
+    return runic_power.current >= 100
+end)
+
+-- 符能高位检测（超过80，应该考虑消耗）
+spec:RegisterStateExpr("runic_power_high", function()
+    return runic_power.current >= 80
+end)
+
+-- 智能死亡符文使用判断：何时应该用死亡符文替代特定符文
+-- 原则：当特定符文充足时保留死亡符文，当特定符文不足时使用死亡符文
+spec:RegisterStateExpr("should_use_death_for_blood", function()
+    -- 没有鲜血符文但有死亡符文时使用
+    if blood_runes.current == 0 and death_runes > 0 then return true end
+    -- 鲜血符文即将浪费时不用死亡符文
+    if blood_rune_wasting then return false end
+    return false
+end)
+
+spec:RegisterStateExpr("should_use_death_for_frost", function()
+    if frost_runes.current == 0 and death_runes > 0 then return true end
+    if frost_rune_wasting then return false end
+    return false
+end)
+
+spec:RegisterStateExpr("should_use_death_for_unholy", function()
+    if unholy_runes.current == 0 and death_runes > 0 then return true end
+    if unholy_rune_wasting then return false end
+    return false
+end)
+
+-- 符文对齐检测：检查是否有多个符文同时可用（爆发窗口）
+spec:RegisterStateExpr("rune_pairs_ready", function()
+    local pairs = 0
+    if blood_runes.current >= 2 then pairs = pairs + 1 end
+    if frost_runes.current >= 2 then pairs = pairs + 1 end
+    if unholy_runes.current >= 2 then pairs = pairs + 1 end
+    return pairs
+end)
+
+-- 全符文就绪（6符文爆发窗口）
+spec:RegisterStateExpr("all_runes_ready", function()
+    return blood_runes.current >= 2 and frost_runes.current >= 2 and unholy_runes.current >= 2
+end)
+
+-- 符文效率评分：评估当前符文状态的效率（0-100）
+-- 高分意味着符文利用率高，低分意味着有浪费
+spec:RegisterStateExpr("rune_efficiency", function()
+    local score = 100
+    -- 每个满的符文对扣分（浪费冷却时间）
+    if blood_runes.current >= 2 then score = score - 15 end
+    if frost_runes.current >= 2 then score = score - 15 end
+    if unholy_runes.current >= 2 then score = score - 15 end
+    -- 符能溢出扣分
+    if runic_power.current >= 130 then score = score - 20 end
+    -- 死亡符文过多扣分（应该使用）
+    if death_runes >= 4 then score = score - 10 end
+    return max(0, score)
+end)
+
+-- 应该使用符能技能（防止溢出）
+spec:RegisterStateExpr("should_dump_runic_power", function()
+    -- 符能超过100必须消耗
+    if runic_power.current >= 100 then return true end
+    -- 符能超过80且没有符文可用时消耗
+    if runic_power.current >= 80 and runes_available == 0 then return true end
+    return false
+end)
+
+-- 智能技能优先级辅助：判断是否应该优先使用某类符文技能
+-- 返回应该优先消耗的符文类型："blood", "frost", "unholy", "death", "none"
+spec:RegisterStateExpr("priority_rune_type", function()
+    -- 优先消耗即将浪费的符文
+    if blood_rune_wasting then return "blood" end
+    if frost_rune_wasting then return "frost" end
+    if unholy_rune_wasting then return "unholy" end
+    -- 死亡符文过多时优先消耗
+    if death_runes >= 4 then return "death" end
+    -- 否则返回当前最多的符文类型
+    local b, f, u = blood_runes.current, frost_runes.current, unholy_runes.current
+    if b >= f and b >= u then return "blood" end
+    if f >= b and f >= u then return "frost" end
+    return "unholy"
+end)
+
+-- 符文冷却同步度：检测符文冷却是否同步（便于爆发）
+-- 返回0-1，1表示完全同步
+spec:RegisterStateExpr("rune_sync_score", function()
+    local cds = {}
+    for i = 1, 2 do
+        local bcd = blood_runes.expiry[i] - state.query_time
+        local fcd = frost_runes.expiry[i] - state.query_time
+        local ucd = unholy_runes.expiry[i] - state.query_time
+        if bcd > 0 then table.insert(cds, bcd) end
+        if fcd > 0 then table.insert(cds, fcd) end
+        if ucd > 0 then table.insert(cds, ucd) end
+    end
+    if #cds < 2 then return 1 end
+    table.sort(cds)
+    -- 计算冷却时间的标准差
+    local sum = 0
+    for _, cd in ipairs(cds) do sum = sum + cd end
+    local avg = sum / #cds
+    local variance = 0
+    for _, cd in ipairs(cds) do variance = variance + (cd - avg)^2 end
+    local stddev = math.sqrt(variance / #cds)
+    -- 标准差越小，同步度越高
+    return max(0, 1 - stddev / 5)
+end)
+
+-- 爆发窗口检测：是否处于适合爆发的状态
+spec:RegisterStateExpr("burst_window", function()
+    -- 至少4个符文可用
+    if runes_available < 4 then return false end
+    -- 符能充足
+    if runic_power.current < 40 then return false end
+    -- 有重要buff时
+    if buff.bloodlust.up or buff.heroism.up then return true end
+    if buff.unholy_frenzy.up then return true end
+    if buff.dancing_rune_weapon.up then return true end
+    -- 符文同步度高时
+    if rune_sync_score > 0.7 and runes_available >= 5 then return true end
+    return false
+end)
+
+-- 保守模式：是否应该保留符文（等待爆发窗口）
+spec:RegisterStateExpr("conserve_runes", function()
+    -- 如果有符文即将浪费，不保守
+    if any_rune_wasting then return false end
+    -- 如果大招快好了，保留符文
+    if cooldown.summon_gargoyle.remains > 0 and cooldown.summon_gargoyle.remains < 10 then return true end
+    if cooldown.dancing_rune_weapon.remains > 0 and cooldown.dancing_rune_weapon.remains < 10 then return true end
+    return false
+end)
+
+-- 疾病刷新优先级：是否应该优先刷新疾病
+spec:RegisterStateExpr("disease_refresh_priority", function()
+    -- 疾病不存在，最高优先级
+    if not dot.frost_fever.ticking or not dot.blood_plague.ticking then return true end
+    -- 疾病即将消失（<3秒）
+    if diseases_min_remains < 3 then return true end
+    -- 有瘟疫打击天赋且疾病<6秒时刷新
+    if talent.epidemic.enabled and diseases_min_remains < 6 then return true end
+    return false
+end)
+
+
+-- PVP 专精选择器已移除，简化为3个主要专精 by 哑吡 20260103

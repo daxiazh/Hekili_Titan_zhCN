@@ -1,0 +1,139 @@
+﻿## Rogue: Assassination PVP - 刺杀盗贼 PVP �?
+## 泰坦时空特别�?- PVP 优化手法
+## 核心策略: 控制�?> 爆发输出 > 生存
+## Requirements: 5.1, 5.3
+
+## ============================================================================
+## 战前准备
+## ============================================================================
+
+actions.precombat+=/stealth
+actions.precombat+=/potion
+
+## ============================================================================
+## 默认动作
+## ============================================================================
+
+actions+=/call_action_list,name=init
+## 治疗药水 - 低血量时使用
+actions+=/best_healing_potion,if=health.pct<35
+## PVP 防守优先
+actions+=/run_action_list,name=pvp_defensive,if=in_pvp&(enemy_burst_active|health.pct<50)
+## PVP 打断优先
+actions+=/run_action_list,name=pvp_interrupt,if=in_pvp&target.casting
+## PVP 控制优先
+actions+=/run_action_list,name=pvp_cc,if=in_pvp&target_is_healer&target_dr_stun<3
+## 潜行起手
+actions+=/run_action_list,name=stealth,if=buff.stealth.up
+## PVP 单目�?
+actions+=/run_action_list,name=pvp_st,if=in_pvp
+## PVE 回退
+actions+=/run_action_list,name=st
+
+## ============================================================================
+## 初始化变�?
+## ============================================================================
+
+actions.init+=/variable,name=envenom_for_buff,value=debuff.deadly_poison.up&combo_points.current>=4&!buff.envenom.up
+actions.init+=/variable,name=envenom_for_spend,value=debuff.deadly_poison.up&combo_points.current>=4&energy.current>90
+actions.init+=/variable,name=envenom_for_snd,value=debuff.deadly_poison.up&combo_points.current>=2&buff.slice_and_dice.up&buff.slice_and_dice.remains<2
+actions.init+=/variable,name=envenom_pending,value=variable.envenom_for_buff|variable.envenom_for_spend|variable.envenom_for_snd
+## PVP 特定变量
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50&!target_has_defensive
+actions.init+=/variable,name=pvp_cc_healer,value=target_is_healer&target_dr_stun<3&combo_points.current>=4
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+## 紧急防�?- 血量极低时
+actions.pvp_defensive+=/cloak_of_shadows,if=health.pct<25&enemy_burst_active
+actions.pvp_defensive+=/evasion,if=health.pct<30&!buff.cloak_of_shadows.up
+actions.pvp_defensive+=/vanish,if=health.pct<20&!buff.evasion.up&!buff.cloak_of_shadows.up
+## 爆发反应防守
+actions.pvp_defensive+=/cloak_of_shadows,if=enemy_burst_active&health.pct<60
+actions.pvp_defensive+=/evasion,if=enemy_burst_active&health.pct<50&!buff.cloak_of_shadows.up
+## 治疗药水
+actions.pvp_defensive+=/healthstone,if=health.pct<25
+actions.pvp_defensive+=/health_potion,if=health.pct<30
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+## 优先打断治疗
+actions.pvp_interrupt+=/kick,if=target_is_healer&target.casting
+## 打断高优先级施法
+actions.pvp_interrupt+=/kick,if=target_cast_priority>=80
+## 打断一般施�?
+actions.pvp_interrupt+=/kick,if=target.casting
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+## 肾击治疗 - 检�?DR
+actions.pvp_cc+=/kidney_shot,if=target_is_healer&target_dr_stun<3&combo_points.current>=4
+## 肾击低血量目�?- 配合击杀
+actions.pvp_cc+=/kidney_shot,if=target.health.pct<30&target_dr_stun<3&combo_points.current>=4
+## 致盲非目标治�?
+actions.pvp_cc+=/blind,if=!target_is_healer&target_dr_disorient<3
+## 凿击打断施法
+actions.pvp_cc+=/gouge,if=target.casting&target_dr_incapacitate<3&!target_is_healer
+
+## ============================================================================
+## PVP 单目标循�?
+## ============================================================================
+
+actions.pvp_st+=/potion,use_off_gcd=1,if=variable.pvp_burst_window
+actions.pvp_st+=/use_items,use_off_gcd=1
+actions.pvp_st+=/kick,use_off_gcd=1
+## 嗜血维护 - 最高优先级
+actions.pvp_st+=/hunger_for_blood,if=remains<2
+## 切割维护
+actions.pvp_st+=/slice_and_dice,if=!buff.slice_and_dice.up|(buff.slice_and_dice.remains<1&!variable.envenom_pending)
+## 冷血配合爆发窗口
+actions.pvp_st+=/cold_blood,use_off_gcd=1,if=variable.pvp_burst_window&combo_points.current>=4
+## 毒化 - 爆发窗口
+actions.pvp_st+=/envenom,if=variable.pvp_burst_window&combo_points.current>=4
+## 毒化 - 维护BUFF
+actions.pvp_st+=/envenom,if=variable.envenom_for_buff
+## 毒化 - 能量溢出
+actions.pvp_st+=/envenom,if=variable.envenom_for_spend
+## 毒化 - 刷新切割
+actions.pvp_st+=/envenom,if=variable.envenom_for_snd
+## 割裂 - 触发嗜血
+actions.pvp_st+=/rupture,if=!debuff.bleed.up&!buff.hunger_for_blood.up&talent.hunger_for_blood.enabled
+## 毁伤攒星
+actions.pvp_st+=/mutilate,if=combo_points.current<4|energy.current>90
+## 后备技�?
+actions.pvp_st+=/sinister_strike
+
+## ============================================================================
+## 潜行起手 (PVP 优化)
+## ============================================================================
+
+actions.stealth+=/garrote,if=in_pvp&target_is_healer
+actions.stealth+=/cheap_shot,if=in_pvp&target_dr_stun<3
+actions.stealth+=/garrote,if=!debuff.bleed.up&!buff.hunger_for_blood.up&talent.hunger_for_blood.enabled
+actions.stealth+=/ambush
+
+## ============================================================================
+## PVE 单目标循�?(回退)
+## ============================================================================
+
+actions.st+=/potion,use_off_gcd=1
+actions.st+=/use_items,use_off_gcd=1
+actions.st+=/kick,use_off_gcd=1
+actions.st+=/hyperspeed_acceleration,use_off_gcd=1
+actions.st+=/pool_resource,for_next=1
+actions.st+=/hunger_for_blood,if=remains<2
+actions.st+=/expose_armor,if=settings.maintain_expose&combo_points.current>=4&!debuff.major_armor_reduction.up
+actions.st+=/slice_and_dice,if=!buff.slice_and_dice.up|(buff.slice_and_dice.remains<1&!variable.envenom_pending)
+actions.st+=/cold_blood,use_off_gcd=1,if=energy.current>=action.envenom.spend&(variable.envenom_for_buff|variable.envenom_for_spend)
+actions.st+=/envenom,if=variable.envenom_for_buff
+actions.st+=/envenom,if=variable.envenom_for_spend
+actions.st+=/envenom,if=variable.envenom_for_snd
+actions.st+=/rupture,if=!debuff.bleed.up&!buff.hunger_for_blood.up&talent.hunger_for_blood.enabled
+actions.st+=/mutilate,if=combo_points.current<4|energy.current>90
+actions.st+=/sinister_strike

@@ -1,5 +1,75 @@
 # Hekili 黑科研修复版
 
+v3.4.5-1.1.4
+
+一、刺杀盗贼更新：
+1.添加死亡印记(marked_for_death)技能支持 - 泰坦服新终结技
+2.在APL中添加转嫁(shiv)用于快速上毒
+3.优化循环逻辑：死亡印记期间避免使用其他终结技
+
+v3.4.5-1.1.3
+
+一、猫德修复：
+1.修复爪击(Claw)在副本和团队中仍被推荐的问题 by 哑吡
+  - 问题描述：爪击应该只在野外单人时使用，副本/团队应使用撕碎(Shred)
+  - 解决方案：在reset_precast钩子中预先缓存实例类型，确保状态模拟时正确判断
+  - 现在副本(party)和团队(raid)中会正确推荐撕碎而非爪击
+
+
+v3.4.5-1.1.2
+
+一、战士修复：
+1.修复致死打击(mortal_strike)技能等级ID未注册导致的警告
+  - 错误信息：IsKnown() - 47486 not found in abilities table
+  - 解决方案：为ability定义添加copy字段，注册所有技能等级ID
+
+二、通用修复：
+1.修复资源不足时推荐图标消失的问题
+  - 问题描述：当能量/怒气等资源不足时，所有职业的推荐图标会消失
+  - 解决方案：当没有技能满足推荐条件时，显示auto_attack(普通攻击)作为后备
+  - 图标会显示当前装备的主手武器纹理
+  - 当资源恢复后，正常的技能推荐会替代普通攻击
+
+v3.4.5-1.1.1
+
+一、猎人修复：
+1.修复兽王猎APL中eagle_shot找不到的问题 BY 哑吡
+2.为hawk_shot添加eagle_shot/eagle别名，统一APL与代码定义
+
+v3.4.5-1.1.0
+
+一、死亡骑士修复：
+1.修复State.lua中TimeToReady函数对数字类型进行索引导致的报错
+2.修复forecastResources函数中资源表类型检查缺失的问题
+3.修复死亡骑士符文冷却计算除以零的问题（regen为0时改用cooldown）
+4.修复Core.lua中WotLK死亡骑士约束时间设置不正确的问题
+
+二、技术改进：
+1.增强state[resource]返回值的类型检查，避免对数字进行索引操作
+2.兼容WotLK分离符文系统（blood_runes/frost_runes/unholy_runes）
+
+v3.4.5-1.0.9
+
+一、脚本修复：
+1.修复Scripts.lua中SimToLua函数处理布尔值时报错的问题
+2.错误信息：attempt to index local 'str' (a boolean value)
+3.解决方案：布尔值直接转换为字符串返回，避免调用字符串方法报错
+
+
+v3.4.5-1.0.7
+
+一、插件修复：
+1.修复Classes.lua中多处nil值字符串连接错误，解决"attempt to concatenate a nil value"问题
+2.修复Options.lua中GetSpellInfo返回nil值导致的字符串连接错误
+3.修复Events.lua中GetSpellInfo返回nil值的错误处理
+4.完善所有纹理(texture)变量的nil值保护机制
+5.优化物品和技能图标显示的容错处理
+
+二、技术改进：
+1.为所有GetSpellTexture()和GetItemIcon()调用添加回退机制
+2.统一处理未定义texture变量的引用问题
+3.增强代码健壮性，避免API返回nil值导致的崩溃
+
 v3.4.5-1.0.6
 
 一、插件完善：

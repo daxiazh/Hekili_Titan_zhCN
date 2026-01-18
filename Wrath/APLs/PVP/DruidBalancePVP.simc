@@ -1,0 +1,100 @@
+﻿## Druid: Balance PVP - 平衡德鲁�?PVP �?
+## 泰坦时空特别�?- PVP 优化手法
+## 核心策略: 控制 > 爆发 > 生存
+## Requirements: 5.1, 5.3
+
+## ============================================================================
+## 战前准备
+## ============================================================================
+
+actions.precombat+=/mark_of_the_wild
+actions.precombat+=/moonkin_form
+actions.precombat+=/potion
+
+## ============================================================================
+## 默认动作
+## ============================================================================
+
+actions+=/call_action_list,name=init
+actions+=/best_healing_potion,if=health.pct<35
+## PVP 防守优先
+actions+=/run_action_list,name=pvp_defensive,if=in_pvp&(enemy_burst_active|health.pct<50)
+## PVP 打断优先
+actions+=/run_action_list,name=pvp_interrupt,if=in_pvp&target.casting
+## PVP 控制优先
+actions+=/run_action_list,name=pvp_cc,if=in_pvp&target_is_healer
+## PVP 单目�?
+actions+=/run_action_list,name=pvp_st,if=in_pvp
+## PVE 回退
+actions+=/run_action_list,name=st
+
+## ============================================================================
+## 初始化变�?
+## ============================================================================
+
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50&!target_has_defensive
+actions.init+=/variable,name=eclipse_solar,value=buff.eclipse_solar.up
+actions.init+=/variable,name=eclipse_lunar,value=buff.eclipse_lunar.up
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+actions.pvp_defensive+=/barkskin,if=health.pct<50&enemy_burst_active
+actions.pvp_defensive+=/bear_form,if=health.pct<30&enemy_burst_active
+actions.pvp_defensive+=/frenzied_regeneration,if=buff.bear_form.up&health.pct<40
+actions.pvp_defensive+=/survival_instincts,if=buff.bear_form.up&health.pct<25
+actions.pvp_defensive+=/innervate,if=mana.pct<20&!enemy_burst_active
+actions.pvp_defensive+=/healthstone,if=health.pct<25
+actions.pvp_defensive+=/health_potion,if=health.pct<30
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+## 平衡德没有打断，使用控制代替
+actions.pvp_interrupt+=/cyclone,if=target_is_healer&target.casting&target_dr_disorient<3
+actions.pvp_interrupt+=/typhoon,if=target.casting&target.distance<10
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+actions.pvp_cc+=/cyclone,if=target_is_healer&target_dr_disorient<3
+actions.pvp_cc+=/entangling_roots,if=!target.debuff.entangling_roots.up&target_dr_root<3
+actions.pvp_cc+=/hibernate,if=target.is_beast&target_dr_disorient<3
+actions.pvp_cc+=/typhoon,if=target.distance<10
+
+## ============================================================================
+## PVP 单目标循�?
+## ============================================================================
+
+actions.pvp_st+=/potion,use_off_gcd=1,if=variable.pvp_burst_window
+actions.pvp_st+=/use_items,use_off_gcd=1
+## 月火维护
+actions.pvp_st+=/moonfire,if=!debuff.moonfire.up|debuff.moonfire.remains<3
+## 虫群维护
+actions.pvp_st+=/insect_swarm,if=!debuff.insect_swarm.up|debuff.insect_swarm.remains<3
+## 爆发窗口
+actions.pvp_st+=/starfall,if=variable.pvp_burst_window
+actions.pvp_st+=/force_of_nature,if=variable.pvp_burst_window
+## 日蚀期间
+actions.pvp_st+=/wrath,if=variable.eclipse_solar
+## 月蚀期间
+actions.pvp_st+=/starfire,if=variable.eclipse_lunar
+## 默认填充
+actions.pvp_st+=/wrath
+
+## ============================================================================
+## PVE 单目标循�?(回退)
+## ============================================================================
+
+actions.st+=/potion,use_off_gcd=1
+actions.st+=/use_items,use_off_gcd=1
+actions.st+=/moonfire,if=!debuff.moonfire.up|debuff.moonfire.remains<3
+actions.st+=/insect_swarm,if=!debuff.insect_swarm.up|debuff.insect_swarm.remains<3
+actions.st+=/starfall
+actions.st+=/force_of_nature
+actions.st+=/wrath,if=buff.eclipse_solar.up
+actions.st+=/starfire,if=buff.eclipse_lunar.up
+actions.st+=/wrath

@@ -1,0 +1,143 @@
+﻿## Mage: Frost PVP - 冰霜法师 PVP �?
+## 泰坦时空特别�?- PVP 优化手法
+## 核心策略: 控制�?> 爆发击杀 > 风筝生存
+## Requirements: 5.1, 5.3
+
+## ============================================================================
+## 战前准备
+## ============================================================================
+
+actions.precombat+=/arcane_brilliance,if=raid&buff.arcane_brilliance.down
+actions.precombat+=/arcane_intellect,if=!raid&buff.arcane_brilliance.down&buff.arcane_intellect.down
+actions.precombat+=/conjure_mana_gem,if=mana_gem_charges<2
+actions.precombat+=/molten_armor,if=buff.unique_armor.down
+actions.precombat+=/summon_water_elemental,if=!pet.active&glyph.eternal_water.enabled
+actions.precombat+=/focus_magic,if=group&active_dot.focus_magic=0
+
+## ============================================================================
+## 默认动作
+## ============================================================================
+
+## 反制优先
+actions+=/counterspell
+## 法术偷取
+actions+=/spellsteal,line_cd=spellsteal_cooldown
+## 治疗药水 - 低血量时使用
+actions+=/best_healing_potion,if=health.pct<35
+## PVP 防守优先
+actions+=/run_action_list,name=pvp_defensive,if=in_pvp&(enemy_burst_active|health.pct<50)
+## PVP 打断优先
+actions+=/run_action_list,name=pvp_interrupt,if=in_pvp&target.casting
+## PVP 控制优先
+actions+=/run_action_list,name=pvp_cc,if=in_pvp
+## PVP 主循�?
+actions+=/run_action_list,name=pvp_st,if=in_pvp
+## PVE 回退
+actions+=/run_action_list,name=st
+
+## ============================================================================
+## 初始化变�?
+## ============================================================================
+
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50&!target_has_defensive&debuff.frozen.up
+actions.init+=/variable,name=pvp_shatter_ready,value=buff.fingers_of_frost.up|debuff.frozen.up
+actions.init+=/variable,name=pvp_cc_healer,value=target_is_healer&target_dr_root<3
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+## 紧急防�?- 血量极低时
+actions.pvp_defensive+=/ice_block,if=health.pct<20
+actions.pvp_defensive+=/cold_snap,if=health.pct<15&cooldown.ice_block.remains>0
+actions.pvp_defensive+=/ice_block,if=health.pct<15&cooldown.ice_block.up
+## 爆发反应防守
+actions.pvp_defensive+=/ice_barrier,if=enemy_burst_active&!buff.ice_barrier.up
+actions.pvp_defensive+=/blink,if=enemy_burst_active&target.within8
+actions.pvp_defensive+=/frost_nova,if=enemy_burst_active&target.within10&target_dr_root<3
+## 治疗药水
+actions.pvp_defensive+=/healthstone,if=health.pct<25
+actions.pvp_defensive+=/health_potion,if=health.pct<30
+## 冰护维护
+actions.pvp_defensive+=/ice_barrier,if=!buff.ice_barrier.up&health.pct<70
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+## 优先打断治疗
+actions.pvp_interrupt+=/counterspell,if=target_is_healer&target.casting
+## 打断高优先级施法
+actions.pvp_interrupt+=/counterspell,if=target_cast_priority>=80
+## 打断一般施�?
+actions.pvp_interrupt+=/counterspell,if=target.casting
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+## 变羊治疗 - 检�?DR
+actions.pvp_cc+=/polymorph,if=target_is_healer&target_dr_incapacitate<3&!target.casting
+## 冰霜新星 - 近战贴脸�?
+actions.pvp_cc+=/frost_nova,if=target.within10&target_dr_root<3&!debuff.frozen.up
+## 宠物冰冻
+actions.pvp_cc+=/freeze,if=pet.active&target_dr_root<3&!debuff.frozen.up
+## 龙息�?- 多目标控�?
+actions.pvp_cc+=/dragons_breath,if=target.within10&target_dr_disorient<3&active_enemies>1
+## 冰锥术减�?
+actions.pvp_cc+=/cone_of_cold,if=target.within10&!debuff.chilled.up
+
+## ============================================================================
+## PVP 单目标循�?
+## ============================================================================
+
+## 爆发�?
+actions.pvp_st+=/mirror_image,if=variable.pvp_burst_window
+actions.pvp_st+=/summon_water_elemental,if=!glyph.eternal_water.enabled&!pet.active
+actions.pvp_st+=/icy_veins,if=variable.pvp_burst_window
+actions.pvp_st+=/arcane_power,if=variable.pvp_burst_window
+actions.pvp_st+=/potion,use_off_gcd=1,if=variable.pvp_burst_window
+actions.pvp_st+=/use_items,if=variable.pvp_burst_window
+## 急速冷�?- 重置冰冷血�?
+actions.pvp_st+=/cold_snap,if=use_cold_snap&buff.icy_veins.down&cooldown.icy_veins.remains>60
+## 深度冻结 - 配合冰指最后一层使�?
+actions.pvp_st+=/deep_freeze,if=variable.pvp_shatter_ready&(action.frostfire_bolt.in_flight|action.frostbolt.in_flight)
+## 冰指触发时优先寒冰箭
+actions.pvp_st+=/frostbolt,if=buff.fingers_of_frost.up&talent.deep_freeze&cooldown.deep_freeze.remains<cast_time*buff.fingers_of_frost.stack
+## 脑冻结触发霜火箭
+actions.pvp_st+=/frostfire_bolt,if=buff.brain_freeze.react
+## 冰枪 - 冰指消�?
+actions.pvp_st+=/ice_lance,if=buff.fingers_of_frost.up&moving
+actions.pvp_st+=/ice_lance,if=debuff.frozen.up
+## 移动时使用火焰冲�?
+actions.pvp_st+=/fire_blast,if=moving&target.within20
+## 蓝量管理
+actions.pvp_st+=/best_mana_potion,use_off_gcd=1
+actions.pvp_st+=/use_mana_gem,use_off_gcd=1,if=mana.pct<70
+actions.pvp_st+=/evocation,if=mana.pct<30&!enemy_burst_active
+## 寒冰�?- 核心技�?
+actions.pvp_st+=/frostbolt
+
+## ============================================================================
+## PVE 单目标循�?(回退)
+## ============================================================================
+
+actions.st+=/mirror_image
+actions.st+=/summon_water_elemental,if=!glyph.eternal_water.enabled
+actions.st+=/icy_veins
+actions.st+=/arcane_power
+actions.st+=/flame_cap
+actions.st+=/potion,use_off_gcd=1
+actions.st+=/cold_snap,if=use_cold_snap&buff.icy_veins.down&cooldown.icy_veins.remains>60
+actions.st+=/use_items
+actions.st+=/deep_freeze,if=(debuff.frozen.up|buff.fingers_of_frost.stack=1)&(action.frostfire_bolt.in_flight|action.frostbolt.in_flight)
+actions.st+=/frostbolt,if=buff.fingers_of_frost.up&talent.deep_freeze&cooldown.deep_freeze.remains<cast_time*buff.fingers_of_frost.stack
+actions.st+=/frostfire_bolt,if=buff.brain_freeze.react
+actions.st+=/blizzard,if=active_enemies>2&!moving
+actions.st+=/cone_of_cold,if=active_enemies>2&target.within10&moving
+actions.st+=/arcane_explosion,if=active_enemies>2&target.within10&moving
+actions.st+=/fire_blast,if=moving&target.within20
+actions.st+=/best_mana_potion,use_off_gcd=1
+actions.st+=/use_mana_gem,use_off_gcd=1,if=mana.pct<70
+actions.st+=/evocation,if=mana.pct<30
+actions.st+=/frostbolt

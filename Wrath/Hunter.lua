@@ -150,6 +150,7 @@ spec:RegisterAuras( {
         id = 13159,
         duration = 3600,
         max_stack = 1,
+        shared = "player",
     },
     -- Your ranged and melee attacks regenerate a percentage of your base mana, but your total damage done is reduced by $s2%.  In addition, you gain $s1% of maximum mana every $t sec.
     aspect_of_the_viper = {
@@ -164,6 +165,14 @@ spec:RegisterAuras( {
         duration = 3600,
         max_stack = 1,
         copy = { 20043, 20190, 27045, 49071 },
+        shared = "player",
+    },
+    -- Increases attack power of party and raid members by $s1.
+    trueshot_aura = {
+        id = 19506,
+        duration = 3600,
+        max_stack = 1,
+        shared = "player",
     },
     auto_shot = {
         id = 75,
@@ -181,6 +190,29 @@ spec:RegisterAuras( {
         id = 19574,
         duration = 10,
         max_stack = 1,
+    },
+
+    -- 魔暴龙巨兽之力：每层提高3%的魔暴龙宠物自身的伤害，最多叠加三层，持续12秒
+    monstrous_strength = {
+        id = 54681,
+        duration = 12,
+        max_stack = 3,
+        generate = function( t )
+            local name, _, count, _, duration, expires, caster = FindUnitBuffByID( "pet", 54681 )
+
+            if name then
+                t.count = count or 1
+                t.applied = expires - duration
+                t.expires = expires
+                t.caster = "pet"
+                return
+            end
+
+            t.count = 0
+            t.applied = 0
+            t.expires = 0
+            t.caster = "nobody"
+        end,
     },
     -- All damage taken increased by $s2%, and $s1 Shadow damage every $t1 seconds.
     black_arrow = {
@@ -207,6 +239,7 @@ spec:RegisterAuras( {
         id = 35101,
         duration = 4,
         max_stack = 1,
+        shared = "target",
     },
     -- Movement slowed by $s1%.
     concussive_shot = {
@@ -341,7 +374,62 @@ spec:RegisterAuras( {
             t.caster = "nobody"
         end,
     },
-    frost_trap = { -- TODO: Check Aura (https://wowhead.com/wotlk/spell=13809)
+
+    -- 疯乱光环：持续20秒，法术ID为53401
+    rabid = {
+        id = 53401,
+        duration = 20,
+        max_stack = 1,
+        generate = function( t )
+            local name, _, count, _, duration, expires, caster = FindUnitBuffByID( "pet", 53401 )
+
+            if name then
+                t.count = 1
+                t.applied = expires - duration
+                t.expires = expires
+                t.caster = "pet"
+                return
+            end
+
+            t.count = 0
+            t.applied = 0
+            t.expires = 0
+            t.caster = "nobody"
+        end,
+    },
+
+    -- 疯乱之力：每层提高宠物自身5%的攻击强度，最大叠加5层，法术ID为53403
+    -- 无持续时间，但仅在疯乱光环期间内生效
+    rabid_power = {
+        id = 53403,
+        max_stack = 5,
+        generate = function( t )
+            local name, _, count, _, duration, expires, caster = FindUnitBuffByID( "pet", 53403 )
+            local frenzy_up = false
+            
+            -- 检查疯乱光环是否存在
+            local frenzy_name, _, _, _, _, frenzy_expires = FindUnitBuffByID( "pet", 53401 )
+            if frenzy_name then
+                frenzy_up = true
+            end
+
+            if name and frenzy_up then
+                t.count = count or 1
+                t.applied = query_time
+                -- 使用疯乱光环的过期时间作为疯乱之力的过期时间
+                t.expires = frenzy_expires
+                t.caster = "pet"
+                return
+            end
+
+            t.count = 0
+            t.applied = 0
+            t.expires = 0
+            t.caster = "nobody"
+        end,
+    },
+    
+    frost_trap = {
         id = 13809,
         duration = 30,
         max_stack = 1,
@@ -350,7 +438,8 @@ spec:RegisterAuras( {
         id = 13810,
         duration = function() return 30 * ( 1 + 0.1 * talent.trap_mastery.rank ) end,
         max_stack = 1,
-        copy = "frost_trap_effect"
+        copy = "frost_trap_effect",
+        shared = "target",
     },
     -- All attackers gain $s2 ranged attack power against this target.
     hunters_mark = {
@@ -440,18 +529,18 @@ spec:RegisterAuras( {
                 name, _, count, _, duration, expires, caster = FindUnitBuffByID( "pet", spell )
 
                 if name then
-                    fs.count = 1
-                    fs.applied = expires - duration
-                    fs.expires = expires
-                    fs.caster = "pet"
+                    t.count = 1
+                    t.applied = expires - duration
+                    t.expires = expires
+                    t.caster = "pet"
                     return
                 end
             end
 
-            fs.count = 0
-            fs.applied = 0
-            fs.expires = 0
-            fs.caster = "nobody"
+            t.count = 0
+            t.applied = 0
+            t.expires = 0
+            t.caster = "nobody"
         end,
     },
     -- Redirecting threat.
@@ -702,6 +791,24 @@ spec:RegisterAuras( {
         copy = { 24131, 24134, 24135, 26748, 27069, 49090, 49010, 65878 }
     },
 
+    -- 雄鹰射击
+    -- 雄鹰射击 buff (hawk_shot/eagle_shot/eagle 为同一技能的不同别名)
+    -- 修复: APL使用eagle_shot/eagle，代码定义为hawk_shot，添加别名统一 BY 哑吡
+    hawk_shot = {
+        id = 1284379,
+        duration = 18,
+        max_stack = 2,
+        copy = { "eagle_shot", "eagle" },
+    },
+
+    -- 豪猪诱饵
+    porcupine_bait = {
+        id = 1284307,
+        duration = 15,
+        max_stack = 1,
+        tick_time = 2.5,
+    },
+
     -- Pet auras.
     call_of_the_wild = {
         id = 53434,
@@ -858,12 +965,13 @@ end )
 
 
 local finish_raptor = setfenv( function()
-    spend( class.abilities.raptor_strike.spends[ spells.raptor_strike ], "mana" )
+    local cost = class.abilities.raptor_strike.spend
+    spend( type( cost ) == "function" and cost() or cost, "mana" )
 end, state )
 
 spec:RegisterStateFunction( "start_raptor", function()
-    applyBuff( "raptor_strike", swings.time_to_next_mainhand )
-    state:QueueAuraExpiration( "raptor_strike", finish_raptor, buff.finish_raptor.expires )
+    applyBuff( "raptor_strike", swing.mainhand.remains )
+    state:QueueAuraExpiration( "raptor_strike", finish_raptor, buff.raptor_strike.expires )
 end )
 
 -- 移除猫鼬撕咬的 buff 触发逻辑，猫鼬撕咬只需要近战范围和闪避触发 by 风雪 20251225
@@ -874,7 +982,7 @@ spec:RegisterHook( "reset_precast", function()
 
     if IsCurrentSpell( class.abilities.raptor_strike.id ) then
         start_raptor()
-        Hekili:Debug( "Starting Raptor Strike, next swing in %.2f...", buff.maul.remains )
+        Hekili:Debug( "开始猛禽一击，下次主手挥击在 %.2f 秒...", swing.mainhand.remains )
     end
 end )
 
@@ -1480,6 +1588,7 @@ spec:RegisterAbilities( {
         texture = 132165,
 
         handler = function ()
+            -- 喂养宠物，无战斗状态变化
         end,
     },
 
@@ -1518,6 +1627,7 @@ spec:RegisterAbilities( {
         texture = 135815,
 
         handler = function ()
+            -- 照明弹，揭示隐身敌人，无状态变化
         end,
     },
 
@@ -1689,6 +1799,8 @@ spec:RegisterAbilities( {
         usable = function() return target.health.pct < 20, "enemy health must be below 20 percent" end,
 
         handler = function ()
+            -- 杀戮射击，对低血量目标造成高伤害
+            -- 如果目标死亡，可能重置冷却（雕文效果）
         end,
 
         copy = { 53351, 61005, 61006 },
@@ -1840,6 +1952,8 @@ spec:RegisterAbilities( {
 
         startsCombat = true,
         texture = 132223,
+
+        usable = function() return target.distance < 10, "requires melee range" end,
 
         handler = function ()
             if glyph.raptor_strike.enabled then applyBuff( "raptor_strike" ) end
@@ -2035,6 +2149,10 @@ spec:RegisterAbilities( {
         texture = 132213,
 
         handler = function ()
+            -- 稳固射击，可能触发改进稳固射击效果
+            if talent.improved_steady_shot.enabled then
+                -- 有几率获得改进稳固射击 buff
+            end
         end,
 
         copy = { 34120, 49051, 49052, 56641 },
@@ -2293,6 +2411,7 @@ spec:RegisterAbilities( {
         texture = 132222,
 
         handler = function ()
+            -- 乱射，AOE 引导技能，无特殊状态变化
         end,
 
         copy = { 1510, 14294, 14295, 27022, 58431, 58434 },
@@ -2391,6 +2510,56 @@ spec:RegisterAbilities( {
         end,
 
         copy = { 24423, 24577, 24578, 24579, 27051, 55487 }
+    },
+
+    -- 豪猪诱饵
+    porcupine_bait = {
+        id = 1284198,
+        cast = 0,
+        cooldown = 25,
+        gcd = "spell",
+
+        spend = function() return mod_beast_within( 0.08 ) end, --待修改
+        spendType = "mana",
+
+        startsCombat = true,
+        texture = 237347,
+
+        handler = function ()
+            applyBuff( "porcupine_bait", 15, 1 )
+        end,
+    },
+
+    -- 雄鹰射击 (hawk_shot/eagle_shot 为同一技能的不同别名)
+    -- 修复: APL使用eagle_shot，代码定义为hawk_shot，添加别名统一 BY 哑吡
+    hawk_shot = {
+        id = 1284199,
+        cast = function()
+            local base = 1.5 * state.haste / 1.15  -- 基础值考虑急速、箭袋15%加速 新增by风雪 20260108
+            if buff.rapid_fire.up then base = base / 1.4 end  -- 急速射击40%加速 新增by风雪 20260108
+            if buff.quick_shots.up then base = base / 1.15 end -- 快速射击15%加速 新增by风雪 20260108
+            return base
+        end,
+
+        cooldown = 6,
+        gcd = "spell",
+
+        spend = function() return mod_beast_within( 0.03 ) end, --待修改
+        spendType = "mana",
+
+        startsCombat = true,
+        texture = 132158,
+
+        usable = function()
+            -- 如果当前雄鹰数量少于2只，或者有雄鹰即将过期（3秒内），则可以使用
+            return buff.hawk_shot.count < 2 or ( buff.hawk_shot.up and buff.hawk_shot.remains < 3 )
+        end,
+
+        handler = function ()
+            applyBuff( "hawk_shot", 18, 2 )
+        end,
+
+        copy = "eagle_shot",
     }
 
 
@@ -2418,10 +2587,10 @@ spec:RegisterOptions( {
 
 spec:RegisterPack( "生存(黑科研)", 20250901, [[Hekili:vJ1spTnwu4FldlgfKMjkj8QivyX0zrNUGUiD3OXoo23KyHJDKTdzyJv6dkjucpkmaTuEPHwArkbqLHMMek)yQV2XR6FH5CTDCCsdL2k1rDyrW(Epp(oF3Z9CUxtfM6our5yurutejuKHcnAOWbJej8idnavu1PZGOIMHHDsMKWdImPHFnxDhC5ncyvFzZdw2C3v7NiX0csmCelPiLvMfKYzA8CBcsy(QZmkMNkA8S8cQ)Miv8oC41IeculdILAcWLP454qoIGuyPI28INOx9qJ5Y38(NR3yd8mfmRDG1mLmpVcENA61w4MOj5f4noPiE(1mlwax4m9ZFM2T0U1hJGF36VxWAZd)dTyAX(zN)UzwrvKSwSPcfmCWqe1GNGN1IHlSLr5N3847B8xNIRmpETh4oxeTygh94MBoR1JlIlud)Sx28nBz(I6MBwXy3zB(U738INzS(z6nEAZl22SEzJIROxDF8Il)HgZJNBx8mph3OgaZB8RGuwRFQE1AruCT9aAXml8qZ7vfF8dWZw3yXLWflzn7IoWaKmuWrui2zXJm29TgLQaCJETAot7AJbjyFFJ1kJ3)PwZwYXsw5R38D2iy)x18FEKX67AUnm(dDMfx4jakDK31kdbwXgS3523aV484Ylr4ZkL9mKE1sgR(oRN8gRnoXy13c67iWhAuWQ(gnRSpUrE8shbsALVO1EVfxAp9QLXZ8AR1bzk66MHHaE(fGqax64Mvo2XLXLuuGqax5PeT3ABY7e3vCfxTgrlwFgBL3Oqf8YNRxF)(WpE((SMDbJ8hGxUbEvyahIUYUMfFfKTACQld4AGRPflaUY2whoF)TDMXw7Px)m9lQaHd4yZ9QOFXwQsS4Jx0i)HaamRSoSequW1mJ2j69YpH1d9ZxaSrNGYjlgdlWNu3C1t6dwf6ZyZtb3bMTp9Q1B(I7cl)qQsF2oGKr6Ht3i6UVXHMjS7mVoGlvBZQ9do0OWggRTozYdEeEPf8e)95VhvubEfvf7T7OemzfuHhNiCRFuPIIezIlG4O(fQOzvq05sXlGOzzuu5ftsekkdRkVKiuiGxvwIoUKeXE2YkLibDswoBPyL5H9u8m2(Hycvg5KivAEfAO(HkSTNGHw2sMjdphDcEzKFaOskgCNoGulfyzeea)rRMcGiVaNFhMbPgKrGFkB3miXaDdUwwbkAiqZkLonJ4LyHorZq(XCgjN)3Hed7xIuqLtzOOgIJMHLfjGKz6HkJCjHOn4usjP6hzefUwxk0EwwjjboPCIb90nOmkndVOIwSX0IbjssqzUpLuJRfZBuAgUPyej1XzzY4GjNcYY8UV6U9ZP8rXs46N18IDAhbO)mJGKcqJoHba9r7DIwlfIlaDzOzKLLY5pSuurmc0(Mul2pQfJdfpBIebB7evilIgLibITZak8WexhouV9DhbKxDo9QRyU6lVsKfWjRoOygwEUXgyWbhDyho(JgFK(TbDGVnlrDB8oz(o0TZP8mGnff(ssf7KJ)8YhEF(76VlMV0dF033RSHTbCxdZXRMIxCGbSzOixcdPGKZGevPDktcfzfHIMqnLiFvKf8QZ5kmRVIXw74XD)KZXlmkxxV2EWOMqRcsw6NfJo2vYMJ)vYKJ)PyXaU7tTzgLGeZ4GdoWaUd6ANRpMZ7Dzav(0qINenhpA8wsOQY5oBGKYszZanvshhk2AVOoK)Lpb0uib7SPa)CyqN(D8E3QD9XAPhP1E)o7h6U7JVMA2HX3s)3UlI9PtH2MmYtAJQb7cvFUzv9EliuctaYCdYaSmNZYQRT1IbTfHFaCaRSiruAEKY4KyWne(HVqvd1)vwe8)(K02eDA40q8T6ufEOlDT)7m4)vuFPh9QBVgAh9d3v078iDAPPi13I)DlD0LYElPDu03Bu)S40SEhsvHAIqFv8k8Q)7B1dAMCugUPBZZJ07dL8)d213(E)0B7H7XMm)eWxcV2Xnv94vcjgnJmcodFCgVRY0oPM8ffuBDpbozMKsIPyYnzxNaV7M6DwM)YRepWvDDaB4nfOczgFFOJCmYIK2yqqxyj8C7GpQbCTo9ApmI3N5axy9M79s4gBA3IeHsK7qrsfJZOG4UTO3xGjNuo14SbtMKWXzvtjjtf15lCy7DQ)9d]] )
 spec:RegisterPack( "射击(黑科研)", 20251203, [[Hekili:nAvSooUnq0VLTX4Ugbl51B2aC7wKQCbiBJsxqefn5ylctrkqszFg4GQcqQpG8bKU0M(775WH8xKHu2ROCKTVgBjXHV5ndN5nSiT4xkY5uhu8s28SLPzzlsYYsNNUOi3DObkYBOST0n4dkAn(7x(NF)l)XNFZ)(5p91)(tF9V(Z36T4Gut5EKS6wddTQiFvRq6EVQy1y4NJ4ABawXl4dvcoh6nbSSI8FMA2ARPkBLOPRSQv5atxzJrOnc3HUY1A81Fe2kKIICPW6SEFs1a(3lHibu0vsGx8df5mCpGrqX4GA2aUK9cxLqTC2XxDIAG40eUa6kF(P05ismNqRqu(qJuBf7W1n0Mchs(ZaV)rsTENqTX)HtBTUv6e2kTBccWrgtvSG76kx2vo7UJaKF8)xM7D2IB5SBH8jCrp0v6zggjGcQfG1BX9X(7vMVtlLWbV)V)m)FYcwfMYmuYncVNFAPhLL368iY(arp9zyv761jwW0akhX6qIMyGAQqHS)DDLlITE8Py8H4iaqcHu26UEHs)wtO(cuhrVM4QaYordy69JveYXihEiWHarNY62MW6mTwY17vjXzUHy55UYy(6ak)qFYDIkUbw6rmap2Pqtq3XWWmGw2Yb4gtlUHUrRQO73ovb2)7OryjR0wBWl3n(CPVR0sQXEvmohCy8ctvfn4KaoyJLGtwlmqIpGgWzyHRxffqHrLYtX4EHKFgwNVShXhcAghnOrFSJ)vpGw8DXw0Abc6YA7zg9ySrvOsPbt4aNqzmqIN1tG73hVfuetEStAKryj8fp4p2z4lOTjVwgCz9m2bgQB0VUn0Sxt)az8xZVuhdkWQacJxKNf4vAm7hlfmoaYInKI2XN0Slxe(MOoNOYKH(guJlD58UYp(XBz50zN3(T2Do2UHy5s9WgSfgZAwBicVFuIWWOy(CQmXLRXTGR)W22UzdyDKHjtOw2vMxL(WTX0lFSbhRG)1lBnHOY7E6AQkHDfC3OwMyLSZc1hpja7MEcJwXAT9X3nhYmtc7aPNJpoFw0aVXcw)6Y00h(nuPA2DJf36hjWH1uCK930fiINYU8cZwxevm0Qi9pt83vP)glK(Br5VZYeI8xCRxDyBmWw3jb(RKMVgZAmatxVI66ZpdVEkdDZbmJoYdGSdfh97j6oG7PgLVkSi)91nAJd4DL33Nq1OSw4YDjD)KNa61cz4kL0wxL2Gp5bT4)c]] )
-spec:RegisterPack( "野兽控制", 20230211, [[Hekili:fs1YUTnmqWpMCPfTr2YjTnPajhYHced0CrbO3O0kPvseMIuGKYQ(c)27sjeBkzB0l6b5SdN9Xqwm7Dwsjyr2BBwV5U1BIJJw)W3Em(owI9qhYs6GIDqn9HeAPNVGGX6Y(n9e1hCzFAqnyZlIQR)Sh7bHck9CAu96ccFJ12z(5QvhHrFzf7wviaJ526EEjAwL7j922joVTPxsVxXsY75c7Rsw(LLiDiDyb7nsQn8YsCciAkyjV3WnUSonxP5wsL()Ybdw6YusxMTbDzhvKl7pAW24YgvtelrWnwZyHbRGEHL(8TXcfuy5kjDUCbkl4Y6utJYYsqjKlWs2lmljspYtRKuqsa1CWtxEFvvubLNuSr9DNyKlT8woLL()S(C6QKOgKNIBQwzsBb9oFC3hktn0XltR4ACHe)wiQcqisvvPurjDGlkxG97HyZrs6GiDWxWwa8hHa3XjsluTTGCjHpeIRtn9EgIhdr0BWuk3BnlafV(SZ7cnJ44)x3ySxyIMxwnOUdL20Xnh556DvlORrB0a32WLKQosc(3oHYW3JPwQtmYYDHAULgT4xsZ3F1ZYhkXhkXwosZ0p7Y2CIW9kHapmsXSomOlajEXYZSUlz)GYdxah9BNgP2zoCUza8Uq7htqLAOwjBGHDlPGizpnQ6JXBK3eVEnP9bql9nawYRTDkT1Br34YMi3LnAfJCB9cqvr2owYn34YwCl0w)AXXUSFH56EWFVK)Qc3w32jImrh1)xEA11uCaEc1CtE4oHM1VYRE6mFDi4qh6iyAqlC)tM0WvxAkd3BMjmCJqtx46tMSWvoAQol8L56mNqqYgyBcHpFM3JFH9ie8rdq4ItdX(iNpS)8MqubJ0ZuB4em0BBuAAe7Jl6hhcz)l]] )
+spec:RegisterPack( "兽王(黑科研)", 202601101, [[Hekili:vNrxZnTv2Fl5Lm2dGRDOgkZe7h2N2npW(G7BDqYYs3eRj2sUsYKYoE84S0qCsd5dinucqjPlSeOLK0YoPH4KM)lT(kz)u(lSNRUYsxjlzhyPt72PdiFVNV)6Eoh4sX9PC5KemqCxFSKJDLKPsLmrQRL(AP)eUCg3QcIlxfbXPfMc(qrOm8N45oXA5Vkw3wRz9I1S2A94eiUvjvbjcL0vRQjcqrVgV4JaiSE5bMl0GlxHQYLm(BkCfcYqaTkirURFzUCfLLKquqq6IC56C6dBF4RmxSrNBFs7J)g8CnTo6fDN7UwNSl(Ph1(OL)ROPLljB(JlGxAdRfAIBEq7tEC9jQpr)sWNH)UVfF)NFJ65j3FPlvpVUAjv8IBHN7545xPBJNs5d9ocWlUL5p1YAJhy9038BnML(nE3TSw4LWpXZ)eRN)T49)s88TWnFgE3nPi2501mB(nuYAU26wTweFVLSw677E8pqbWQ5DWRSMdFTPM1Ihy2y2UpCvq8p74nXRSu33U)fSw6vxWAJ9A)2F8c4FEhWUF2Xn7(61n38)09xE4zhVGd1E0H45EdE3vaen36q8P3UZVCF88hr1fRwRbcgapqq8Unnx8zX(irbDdD0NxfPiIQNxdPJmYmw98JWc1f)I4ND8swBVB7tFsNNSFNhnp9C8Qlto3MNuoy2A7oh8gZL3PZDx18jB3U1bMp4a8k71z(xHxChCZ5nV73HBUplX5Yvsgebs8szujeIxtqbcW(uURBhnIuekucjX9x4YjQjBG0Kf4YfdeqjuHQtozcrvfXQ66Y3eXRxu1ir1k1ZxRw98rCTgQSGSIE98Jxp)uIs1ZhVE(rRNNqqxCMrwzkEXsYvcsmVlIGman0eKLS)wyQP0u5YjiAiRQWLZfxodiwpGM1dOYQktPQQJ4laAkRcBiOnfYiHeyPeah14zstiZL7zLmcLAAcvmu141n0KNE4uZGKLnPq1sgd22dajxcXtPbVSopPoqpwQiBOPYxa0bWJgII6rMIiHsgftur0amIzQNpDspQqVt3qvb1tnJmoquvTKK6mkjGm)sb8XaztsDGdcQS1Z7EkVG0nfSZecjU4)xc1ciiet4h)hNjSGQUU9hUIRHCzi(rLxsgaklWHlZ47nG0)phEBq(FqSa9K)0)Xj)vGOCAajpnyTE(RMKA2Tf5eLrks8aujS1lDzBCjQvQ0mz2oaruMRePYaovBVVa5jqdE1j5nkI4VPCfKMDacW0YckcjGFlIuCYCsXy9cbrchVAe1BefaLM(dEsvyFYIJ65zUKvCQnBxXMN2baBnBGtFcHt9iVlQSmha6AVhItKstVKQymry0yU4uhpCbKEuTcuOQCbKgnOiT)yZ(cjtLMfFAoRnvONfGGJBtW4rfDBFLt2aX9wuyMP9kH0)PIQvjoxa3X8zRfLSlQcoCW(vfEMqDYj5HAcKY1Hhqrclfkbvcc4uevldbss2ulyP(ZR3akVGuqLLr6o6zppXVB5J(mgcQ2bCPI6T0bj()(iH(epDd6BQv0qGXUGWqEv99Tws0pWoITViKYjsActPQqI2CF0zGfDIhsDhq9hlYYoEmyWVE78uxriyhYI4llOnDcI9MMgr7rXPnbXQAA9yCQKK)JPBbg8P2CsOXaT2tkpvrdEwNjBru0xuPKQ9ZNWJrH2V2aseG8apkDt1sLq3Y1k46aHMSKdPU4hZcufvnXQvKvGMbfKdczAwiD4IpimOvl6zfcwSGPfrzj(jL1qbyWy)VuIXo1Zjyyg5ssUgG3xcwaPBiluIFgnbJIUwQOuQIWKQAqejscY)fH3NaSOow)giDVCsxu7vdomZX5YZeD4U)hgiHCVJb69hxoW26grckyPJ0Qa0dgcaANcQQion83oDA231ETAcvCSpspKgI77bohinmCBoDy6eB7tbLqM6Ea4EAVp4gApHgcLaGtiaKtIw62bsxwhiRnf779J8EqGK2pq1FkEVg(CRv6sXarox1huAIckOWa7tEpRNgwBjNdxvK1z7RlUqEE11k47Ht3t9E401jBGeKULBB)0oDgmpy8qSmX74HXf7Ab3e0mYDmRHAgbnfsGnxoZx)m6wMm3y(2ToW64JW7VgEV32TXMwRVt3NVp((ZAT5xAU(EMln7V14FIBDuND31CVvAF4R82t1TpP7JB05FplEP5m)QF4SJ3S(e1ZFP65)S2NCkqgRfEjqMBC2XlbaGx97B3Qv7t(AZFABZhVa9e8J3XLATp81ahPSgqXS5gDAmxpcspo1nW3BjNVhJq3oN(qZT(z8SBI3)o0v0a6a(O1PG05Fnh(zZBU1kSKguM6ty2Cv8IpfV3X45EE7JUZvC3bhU5d6S9o2WqA0rLSyGEwz9eUD(CHmFuVwwUO8KzIUvNSzG2UNim8JQbdc9gj2WAYPwTb0Gt8rzBTj7yjdxcyJ(jCnQKTrdnHkRtDVjCjoqs2LLqjzFBwHfCMTIqG2BbkJNjDswadm)pb4yr3lBMK1Qf9Tz7Rl34Jgl6DVvR2GxgY4WB1meGD9hUO23QpOincz6UrTx1bRY2)(c(GRVKPeh1M7mfrZM5Y(m6Sr4Fq5U)9pm(vto65mbQV0g7iE7mMbKo4lBy8mPceZgCQQlsM2jdZsaSPVJegYW6mKY9wYQRhghGMzzQD0pHhnwmBpeXxfVwTy(gqptAQp0N7lvAcCXgXgYA18HW4PJh0xhhIdczk9SjPh7VNqID0(4YGobj5v1jBHfPmfKWQBiioD2XO3Rjua6)UI6mGTNErYHBT)tOTON(gW6KzS(C4oBE4ImnVNjfrDCB7F4gay(o70SYQsOm)AJhd)(xB8eOUYhW8UHlf6256F4yjtIwcMekG)UveT16)0u9nGu67F8cwLbIxHR9g10VVpiCbhE88eP4GQVXeFhWlIbgdkNEObbCaA(NhJWbF7viBQKbXGoPEVKxVbiYE5Gq62JCWl8xOjCgWkQ62nV0lTmW5rrm7l7x9yldKk5q60XhT8n8MtuCitNQqMofcfJAY0XZ4FQuiy2xPjVjrJpqPR3tOrn7z2ubKFx3HTSh5SHJgWTMIuwDKZn4jJhGTEOe8cVXdd6Qp39P6VM(7K30B(jFLa7BCVS9nQ35Ks9pux2WgORGGos6Vdt01D(LXZDI5YVa38aycKQgfv14YHV3xd)F3d32EgpU)l]] )
 spec:RegisterPack( "射击(练级)", 20251203, [[Hekili:vE1YoUTnu0VLSXyg0avBn2Utbg7ffOandqNnk7kQKOLOTigjsbsk7yGbAtlq)u62UU57ji)g9ssllkA9ifbi2J4H333ZroCr4hddsrsC4l(Z9xTWF(sVfpo33FDyG8CjomOeL8k6a8fkQa()V8p)5x(RpF3x)8F81)9VVxD85CgkvzgbRINaqcd2vrYLFGgURJTx4VeavItcF5HWGmsAk2ablscd(ve)vrbIkYiL1XzvujMxhxYjmorEUoEpd(ZFb)kjNegKtesHYNigg(4fDAGPOD540WFkmibUdMtqqsG4hWsVtezgHUA2L)uskWrswukbxhVDZI5GLsKegfSYNkZzcYr4CoQmucbVJXnFnQGDKqpOEqZvlQYLergtcF1C4lZ7jwsHGhrt0EUoEvD8S3DbUuvzMWztzUgJbMTowfzqMGP4ccwOqSSnCpYYZXNTJvW)lD8Fd4KmOKXrrM0BWGy7MvkRSAQ(HfEiqBEiEx1(9EcmVetLrcjH6XXficfc9NQJFqNt92cT7G23xvtLQrS9iO503OsZT4v0iZ3JutxtuOxnq59bZSzKzzrnD2Za0OvVHdildlKnZk68r(TLrwgOKJtyf7qst9r0BPPnonMXdP2ELrS9rYmC0rsjMB6dcIUUa9O16cJUp2h6Qs95jmwEk7e1ZESQTxVTo2UFkXO0ZMjVrRMklQnpqJG8a3LaJbAR5Bvx7gwPC0bgndD61(2(UPtrer7ycH2lVR7yRHYsevaezqE26q7d6BfR1jA7aSoK0O9eo2tLqw9ZRhm(kM2kjO88MC8ejp1XwUhRS4AnH6faLSl0Hx9aG4hSrujWrGlleoGE0gugOHWHcoofgftW5qVUh7(J2xby4ZVqZ0beSIpyJ)cXHAHxOZ0ri6toNaeQMZfQH(Gc0NI6(0GfdtN8YIf2HBxIXUrSVnqeGlTxydp1DN1QI1Cr7IcW4Vy18643EBkK9tCE)366yxCT5YqlTCyNLqXcHodx2PqWtquCVvIHhQfyPP7kQoCad8yT60kQTHvVxSEABQ4loaISWhgEQEyrEAZy0i6BPDxNDeBQlNu9XXjVty0KkHj)MuYDwo(ioxfJpoFML8FxgQFdEfS1)oqnn7DDzZmAaTscnsbtYy2jL0g5iSTRUJ1B8DcXPQQCyWhkkzCjoToEPr7Kb016xLZR(zWnvYmgpm4Jz4FUqaVAcsXdXz7j54MGr4Dnm)UnF)qbw9Z9H2Mh(9K9B0YfniHZD0lFVsPCdiHRW2vPF7g)jVOqw)CBCiubG10qJnNuu9P1ZgrmD2OBUBN7eadvVAQgZSh536VY56JwanqAPEua6tpZ5cUcrxVwVcyox2is58WR6sUrF)sroOUQ(427Svb0j)nAoUzMvhXTpCL(0T81WAQ8WDJqOdszRM)2BJH4w6(7NACz2ie83om1sJ7CsxsyvQmk79OdP6j9oM4gY6otTpT5MXwR1o7vsyZU3yT7Vy0f)1FJN7bMFnvFCfp4c9)1SK5kDEld1)c)Vd]] )
 
-spec:RegisterPackSelector( "beast_mastery", "野兽控制", "|T132164:0|t 野兽控制",
+spec:RegisterPackSelector( "beast_mastery", "兽王(黑科研)", "|T132164:0|t 兽王",
     "如果你在|T132164:0|t野兽控制天赋中投入的点数多于其他天赋,将会为你自动选择该优先级。",
     function( tab1, tab2, tab3 )
         return tab1 > max( tab2, tab3 )
@@ -2458,23 +2627,6 @@ spec:RegisterSetting( "hunter_pet_low_health", 50, {
     step = 5,                         -- 步长：5%（每次拖动增加/减少5%）
 } )
 
-spec:RegisterSetting( "black_arrow_on_moving", true, {
-    type = "toggle",
-    name = "|T136181:0|tBOSS大范围移动时使用黑箭",
-    desc = "启用后，当BOSS持续移动超过5秒时，优先推荐黑箭（单体情况下）。",
-    width = "full",
-} )
-
-spec:RegisterSetting( "moving_long_threshold", 5, {
-    type = "range",
-    name = "大范围移动判定时间",
-    desc = "BOSS持续移动超过此时间（秒）视为大范围移动，默认5秒。",
-    width = "full",
-    min = 2,
-    softMax = 10,
-    step = 0.5,
-} )
-
 spec:RegisterSetting( "kill_shot_advance", 0.25, {
     type = "range",
     name = "|T236174:0|t杀戮射击提前量",
@@ -2489,6 +2641,16 @@ spec:RegisterSetting( "explosive_shot_advance", 0.7, {
     type = "range",
     name = "|T236178:0|t爆炸射击提前量",
     desc = "|T236178:0|t爆炸射击会提前设定值进行提示(单位：秒),默认0.7。",
+    width = "full",
+    min = 0,
+    softMax = 1.5,
+    step = 0.1,
+} )
+
+spec:RegisterSetting( "hawk_shot_advance", 0, {
+    type = "range",
+    name = "|T132158:0|t雄鹰射击提前量",
+    desc = "|T132158:0|t雄鹰射击会提前设定值进行提示(单位：秒),默认0.7。",
     width = "full",
     min = 0,
     softMax = 1.5,
@@ -2562,28 +2724,3 @@ spec:RegisterSetting( "ICC", nil, {
     type = "header",
     name = "冰冠堡垒"
 } )
-
-
-spec:RegisterPack( "野兽控制PVP(黑科研)", 20251225, [[Hekili:hunter_beast_mastery_pvp]] )
-
-spec:RegisterPack( "射击PVP(黑科研)", 20251225, [[Hekili:hunter_marksmanship_pvp]] )
-
-spec:RegisterPack( "生存PVP(黑科研)", 20251225, [[Hekili:hunter_survival_pvp]] )
-
-spec:RegisterPackSelector( "beast_mastery_pvp", "野兽控制PVP(黑科研)", "|T132164:0|t 野兽控制PVP",
-    "PVP专用野兽控制天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
-
-spec:RegisterPackSelector( "marksmanship_pvp", "射击PVP(黑科研)", "|T132222:0|t 射击PVP",
-    "PVP专用射击天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )
-
-spec:RegisterPackSelector( "survival_pvp", "生存PVP(黑科研)", "|T132215:0|t 生存PVP",
-    "PVP专用生存天赋优先级，适用于战场和竞技场。",
-    function( tab1, tab2, tab3 )
-        return false
-    end )

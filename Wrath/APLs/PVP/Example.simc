@@ -1,0 +1,59 @@
+﻿## PVP APL 示例文件
+## 本文件展�?PVP APL 的基本结构和可用条件
+## 实际使用时请根据职业和专精创建专用文�?
+
+## ============================================================================
+## PVP 特定变量
+## ============================================================================
+
+## 初始�?PVP 变量
+actions.init+=/variable,name=pvp_defensive_needed,value=enemy_burst_active&health.pct<70
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50
+actions.init+=/variable,name=pvp_cc_target,value=target.is_healer&!target.dr_stun>=3
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+## 紧急防�?- 血量极低时
+actions.pvp_defensive+=/healthstone,if=health.pct<20
+actions.pvp_defensive+=/health_potion,if=health.pct<25
+
+## 爆发反应防守 - 敌方爆发�?
+actions.pvp_defensive+=/defensive_cooldown,if=enemy_burst_active&health.pct<70
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+## 优先打断治疗
+actions.pvp_interrupt+=/kick,if=target.is_healer&target.casting
+
+## 打断控制技�?
+actions.pvp_interrupt+=/kick,if=target.casting
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+## 对治疗使用控制（检�?DR�?
+actions.pvp_cc+=/kidney_shot,if=target.is_healer&target.dr_stun<3&combo_points>=4
+
+## 对非目标使用控制
+actions.pvp_cc+=/blind,if=!target.is_healer&target.dr_disorient<3
+
+## ============================================================================
+## PVP 主循�?
+## ============================================================================
+
+## 检查是否需要防�?
+actions+=/run_action_list,name=pvp_defensive,if=variable.pvp_defensive_needed
+
+## 检查打断机�?
+actions+=/run_action_list,name=pvp_interrupt,if=target.casting
+
+## 检查控制机�?
+actions+=/run_action_list,name=pvp_cc,if=variable.pvp_cc_target
+
+## 正常输出循环
+actions+=/run_action_list,name=st

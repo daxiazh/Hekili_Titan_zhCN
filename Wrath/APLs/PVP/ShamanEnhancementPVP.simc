@@ -1,0 +1,97 @@
+﻿## Shaman: Enhancement PVP - 增强萨满 PVP �?
+## 泰坦时空特别�?- PVP 优化手法
+## 核心策略: 爆发 > 控制 > 生存
+## Requirements: 5.1, 5.3
+
+## ============================================================================
+## 战前准备
+## ============================================================================
+
+actions.precombat+=/lightning_shield
+actions.precombat+=/potion
+
+## ============================================================================
+## 默认动作
+## ============================================================================
+
+actions+=/call_action_list,name=init
+actions+=/best_healing_potion,if=health.pct<35
+## PVP 防守优先
+actions+=/run_action_list,name=pvp_defensive,if=in_pvp&(enemy_burst_active|health.pct<50)
+## PVP 打断优先
+actions+=/run_action_list,name=pvp_interrupt,if=in_pvp&target.casting
+## PVP 控制优先
+actions+=/run_action_list,name=pvp_cc,if=in_pvp&target_is_healer
+## PVP 单目�?
+actions+=/run_action_list,name=pvp_st,if=in_pvp
+## PVE 回退
+actions+=/run_action_list,name=st
+
+## ============================================================================
+## 初始化变�?
+## ============================================================================
+
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50&!target_has_defensive
+actions.init+=/variable,name=maelstrom_5,value=buff.maelstrom_weapon.stack>=5
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+actions.pvp_defensive+=/shamanistic_rage,if=health.pct<40&enemy_burst_active
+actions.pvp_defensive+=/feral_spirit,if=health.pct<50&enemy_burst_active
+actions.pvp_defensive+=/stoneclaw_totem,if=health.pct<50
+actions.pvp_defensive+=/healing_wave,if=health.pct<40&variable.maelstrom_5
+actions.pvp_defensive+=/healthstone,if=health.pct<25
+actions.pvp_defensive+=/health_potion,if=health.pct<30
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+actions.pvp_interrupt+=/wind_shear,if=target_is_healer&target.casting
+actions.pvp_interrupt+=/wind_shear,if=target_cast_priority>=80
+actions.pvp_interrupt+=/wind_shear,if=target.casting
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+actions.pvp_cc+=/hex,if=target_is_healer&target_dr_incapacitate<3
+actions.pvp_cc+=/earthbind_totem,if=!totem.earth.active
+actions.pvp_cc+=/frost_shock,if=!target.debuff.frost_shock.up
+
+## ============================================================================
+## PVP 单目标循�?
+## ============================================================================
+
+actions.pvp_st+=/potion,use_off_gcd=1,if=variable.pvp_burst_window
+actions.pvp_st+=/use_items,use_off_gcd=1
+actions.pvp_st+=/wind_shear,use_off_gcd=1
+## 爆发窗口
+actions.pvp_st+=/feral_spirit,if=variable.pvp_burst_window
+## 漩涡武器消�?
+actions.pvp_st+=/lightning_bolt,if=variable.maelstrom_5
+## 风暴打击
+actions.pvp_st+=/stormstrike
+## 熔岩猛击
+actions.pvp_st+=/lava_lash
+## 烈焰震击
+actions.pvp_st+=/flame_shock,if=!debuff.flame_shock.up
+## 大地震击
+actions.pvp_st+=/earth_shock
+## 冰霜震击 - 减�?
+actions.pvp_st+=/frost_shock,if=!target.debuff.frost_shock.up
+
+## ============================================================================
+## PVE 单目标循�?(回退)
+## ============================================================================
+
+actions.st+=/potion,use_off_gcd=1
+actions.st+=/use_items,use_off_gcd=1
+actions.st+=/feral_spirit
+actions.st+=/lightning_bolt,if=buff.maelstrom_weapon.stack>=5
+actions.st+=/stormstrike
+actions.st+=/lava_lash
+actions.st+=/flame_shock,if=!debuff.flame_shock.up
+actions.st+=/earth_shock

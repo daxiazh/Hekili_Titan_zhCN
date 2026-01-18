@@ -1,0 +1,101 @@
+﻿## Priest: Shadow PVP - 暗影牧师 PVP �?
+## 泰坦时空特别�?- PVP 优化手法
+## 核心策略: 持续压制 > 控制 > 爆发
+## Requirements: 5.1, 5.3
+
+## ============================================================================
+## 战前准备
+## ============================================================================
+
+actions.precombat+=/power_word_fortitude
+actions.precombat+=/shadowform
+actions.precombat+=/inner_fire
+actions.precombat+=/potion
+
+## ============================================================================
+## 默认动作
+## ============================================================================
+
+actions+=/call_action_list,name=init
+actions+=/best_healing_potion,if=health.pct<35
+## PVP 防守优先
+actions+=/run_action_list,name=pvp_defensive,if=in_pvp&(enemy_burst_active|health.pct<50)
+## PVP 打断优先
+actions+=/run_action_list,name=pvp_interrupt,if=in_pvp&target.casting
+## PVP 控制优先
+actions+=/run_action_list,name=pvp_cc,if=in_pvp&target_is_healer
+## PVP 单目�?
+actions+=/run_action_list,name=pvp_st,if=in_pvp
+## PVE 回退
+actions+=/run_action_list,name=st
+
+## ============================================================================
+## 初始化变�?
+## ============================================================================
+
+actions.init+=/variable,name=pvp_burst_window,value=!enemy_burst_active&target.health.pct<50&!target_has_defensive
+actions.init+=/variable,name=dots_up,value=debuff.shadow_word_pain.up&debuff.vampiric_touch.up&debuff.devouring_plague.up
+
+## ============================================================================
+## PVP 防守优先�?
+## ============================================================================
+
+actions.pvp_defensive+=/dispersion,if=health.pct<30&enemy_burst_active
+actions.pvp_defensive+=/fade,if=enemy_burst_active
+actions.pvp_defensive+=/power_word_shield,if=health.pct<50&!buff.weakened_soul.up
+actions.pvp_defensive+=/vampiric_embrace,if=health.pct<60
+actions.pvp_defensive+=/healthstone,if=health.pct<25
+actions.pvp_defensive+=/health_potion,if=health.pct<30
+
+## ============================================================================
+## PVP 打断优先�?
+## ============================================================================
+
+actions.pvp_interrupt+=/silence,if=target_is_healer&target.casting
+actions.pvp_interrupt+=/silence,if=target_cast_priority>=80
+actions.pvp_interrupt+=/silence,if=target.casting
+
+## ============================================================================
+## PVP 控制优先�?
+## ============================================================================
+
+actions.pvp_cc+=/psychic_scream,if=target.distance<8&target_dr_fear<3
+actions.pvp_cc+=/psychic_horror,if=target_is_healer&target_dr_stun<3
+actions.pvp_cc+=/mind_control,if=target_is_healer&target_dr_disorient<3
+
+## ============================================================================
+## PVP 单目标循�?
+## ============================================================================
+
+actions.pvp_st+=/potion,use_off_gcd=1,if=variable.pvp_burst_window
+actions.pvp_st+=/use_items,use_off_gcd=1
+actions.pvp_st+=/silence,use_off_gcd=1
+## 暗影形�?
+actions.pvp_st+=/shadowform,if=!buff.shadowform.up
+## DOT 维护
+actions.pvp_st+=/vampiric_touch,if=!debuff.vampiric_touch.up|debuff.vampiric_touch.remains<3
+actions.pvp_st+=/shadow_word_pain,if=!debuff.shadow_word_pain.up|debuff.shadow_word_pain.remains<3
+actions.pvp_st+=/devouring_plague,if=!debuff.devouring_plague.up
+## 爆发窗口
+actions.pvp_st+=/shadowfiend,if=variable.pvp_burst_window
+## 暗言术：�?- 斩杀
+actions.pvp_st+=/shadow_word_death,if=target.health.pct<25
+## 精神鞭笞
+actions.pvp_st+=/mind_blast
+## 精神灼烧
+actions.pvp_st+=/mind_flay,if=variable.dots_up
+
+## ============================================================================
+## PVE 单目标循�?(回退)
+## ============================================================================
+
+actions.st+=/potion,use_off_gcd=1
+actions.st+=/use_items,use_off_gcd=1
+actions.st+=/shadowform,if=!buff.shadowform.up
+actions.st+=/vampiric_touch,if=!debuff.vampiric_touch.up|debuff.vampiric_touch.remains<3
+actions.st+=/shadow_word_pain,if=!debuff.shadow_word_pain.up|debuff.shadow_word_pain.remains<3
+actions.st+=/devouring_plague,if=!debuff.devouring_plague.up
+actions.st+=/shadowfiend
+actions.st+=/shadow_word_death,if=target.health.pct<25
+actions.st+=/mind_blast
+actions.st+=/mind_flay
